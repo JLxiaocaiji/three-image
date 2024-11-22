@@ -5,7 +5,7 @@
 
 
 <script lang='ts' setup>
-import { onMounted, onUnmounted, ref } from 'vue';
+import { onMounted } from 'vue';
 import { Power0, gsap } from 'gsap'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import BAS from "./bas"
@@ -40,7 +40,7 @@ const show = (deviceInfo: Record<string, any>) => {
   const l1 = new THREE.ImageLoader();
 	l1.setCrossOrigin('Anonymous');
 	l1.load('../images/winter.jpg', function(img) {
-    console.log(4444);
+    console.log("image");
     console.log(img)
 	  slide.setImage(img);
 	})
@@ -90,7 +90,7 @@ const createTweenScrubber = (tween: gsap.core.Timeline, seekSpeed: number = 0.00
     _cx = e.clientX
     stop()
   })
-  window.addEventListener('mouseup', function (e) {
+  window.addEventListener('mouseup', function () {
     mouseDown = false
     document.body.style.cursor = 'pointer'
     resume()
@@ -249,25 +249,21 @@ const utils = {
 
 class Slide extends THREE.Mesh {
   totalDuration: number
-  
+
   constructor(width: number, height: number, animationPhase: 'in' | 'out') {
     const plane = new THREE.PlaneGeometry(width, height, width * 2, height * 2)
 
-    console.log(1111)
-    console.log(plane)
-    BAS.Utils.separateFaces(plane)
+    // BAS.Utils.separateFaces(plane)
 
     const geometry = new SlideGeometry(plane)
 
-    // geometry.bufferUVs();
+    geometry.bufferUVs();
 
     const aAnimation = geometry.createAttribute('aAnimation', 2);
     const aStartPosition = geometry.createAttribute('aStartPosition', 3);
     const aControl0 = geometry.createAttribute('aControl0', 3);
     const aControl1 = geometry.createAttribute('aControl1', 3);
     const aEndPosition = geometry.createAttribute('aEndPosition', 3);
-
-    // let i: number, i2: number, i3: number, i4: number, v: number
 
     const minDuration = 0.8
     const maxDuration = 1.2
@@ -298,37 +294,36 @@ class Slide extends THREE.Mesh {
       return tempPoint
     }
 
-    console.log(2222)
-    console.log(geometry)
-
-    for (let i = 0, i2 = 0, i3 = 0, i4 = 0; i < geometry.getAttribute('position').count / 3; i++, i2 += 6, i3 += 9, i4 += 12) {
+    for (let i = 0, i2 = 0, i3 = 0, i4 = 0; i < geometry.faceCount; i++, i2 += 6, i3 += 9, i4 += 12) {
       // 获取当前面的索引（假设使用索引，如果没有索引可以按顺序获取，这里以有索引为例稍作调整）
-      const indexAttribute = geometry.getIndex();
-      const baseIndex = i * 3;
-      const indexA = indexAttribute? indexAttribute.getX(baseIndex) : baseIndex;
-      const indexB = indexAttribute? indexAttribute.getX(baseIndex + 1) : baseIndex + 1;
-      const indexC = indexAttribute? indexAttribute.getX(baseIndex + 2) : baseIndex + 2;
+      // const indexAttribute = geometry.getIndex();
+      // const baseIndex = i * 3;
+      // const indexA = indexAttribute? indexAttribute.getX(baseIndex) : baseIndex;
+      // const indexB = indexAttribute? indexAttribute.getX(baseIndex + 1) : baseIndex + 1;
+      // const indexC = indexAttribute? indexAttribute.getX(baseIndex + 2) : baseIndex + 2;
 
-      const vertexA = [
-          geometry.getAttribute('position').getX(indexA * 3),
-          geometry.getAttribute('position').getY(indexA * 3),
-          geometry.getAttribute('position').getZ(indexA * 3)
-      ];
-      const vertexB = [
-          geometry.getAttribute('position').getX(indexB * 3),
-          geometry.getAttribute('position').getY(indexB * 3),
-          geometry.getAttribute('position').getZ(indexB * 3)
-      ];
-      const vertexC = [
-          geometry.getAttribute('position').getX(indexC * 3),
-          geometry.getAttribute('position').getY(indexC * 3),
-          geometry.getAttribute('position').getZ(indexC * 3)
-      ];
+      // const vertexA = [
+      //     geometry.getAttribute('position').getX(indexA * 3),
+      //     geometry.getAttribute('position').getY(indexA * 3),
+      //     geometry.getAttribute('position').getZ(indexA * 3)
+      // ];
+      // const vertexB = [
+      //     geometry.getAttribute('position').getX(indexB * 3),
+      //     geometry.getAttribute('position').getY(indexB * 3),
+      //     geometry.getAttribute('position').getZ(indexB * 3)
+      // ];
+      // const vertexC = [
+      //     geometry.getAttribute('position').getX(indexC * 3),
+      //     geometry.getAttribute('position').getY(indexC * 3),
+      //     geometry.getAttribute('position').getZ(indexC * 3)
+      // ];
 
-      const centroid = new THREE.Vector3();
-      centroid.x = (vertexA[0] + vertexB[0] + vertexC[0]) / 3;
-      centroid.y = (vertexA[1] + vertexB[1] + vertexC[1]) / 3;
-      centroid.z = (vertexA[2] + vertexB[2] + vertexC[2]) / 3;
+      // const centroid = new THREE.Vector3();
+      // centroid.x = (vertexA[0] + vertexB[0] + vertexC[0]) / 3;
+      // centroid.y = (vertexA[1] + vertexB[1] + vertexC[1]) / 3;
+      // centroid.z = (vertexA[2] + vertexB[2] + vertexC[2]) / 3;
+
+      const centroid = BAS.Utils.computeCentroid(geometry, i);
 
       // Animation
       const duration = THREE.MathUtils.randFloat(minDuration, maxDuration)
@@ -384,10 +379,11 @@ class Slide extends THREE.Mesh {
     // 创建一个自定义材质，用于实现动画效果
     const material = new BasicAnimationMaterial(
       {
-        flatShading: true,
+        flatShading: THREE.FlatShading,
         side: THREE.DoubleSide,
         uniforms: {
-          uTime: { type: 'f', value: 0 },
+          // uTime: { type: 'f', value: 0 },
+          uTime: { value: 0 },
         },
         shaderFunctions: [
           BAS.ShaderChunk['cubic_bezier'],
@@ -419,10 +415,11 @@ class Slide extends THREE.Mesh {
     )
 
     super(geometry, material)
+    this.frustumCulled = false;
   }
-  setImage(image) {
-    (this.material as THREE.ShaderMaterial).uniforms.map.value.image = image
-    (this.material as THREE.ShaderMaterial).uniforms.map.value.needsUpdate = true
+  setImage(image: HTMLImageElement | HTMLCanvasElement | THREE.Texture) {
+    (this.material as THREE.ShaderMaterial).uniforms.map.value.image = image;
+    (this.material as THREE.ShaderMaterial).uniforms.map.value.needsUpdate = true;
   }
 
   transition() {
@@ -437,6 +434,15 @@ class Slide extends THREE.Mesh {
       )
       .duration(3.0)
   }
+
+  // get time(): number {
+  //       return (this.material as THREE.ShaderMaterial).uniforms['uTime'].value;
+  //   }
+
+  //   // 设置时间属性
+  //   set time(v: number) {
+  //       (this.material as THREE.ShaderMaterial).uniforms['uTime'].value = v;
+  //   }
 }
 
 // class SlideGeometry extends ModelBufferGeometry {

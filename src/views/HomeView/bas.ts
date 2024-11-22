@@ -31,6 +31,8 @@ BAS.ShaderChunk['ease_out_cubic'] =
 BAS.ShaderChunk['quaternion_rotation'] =
   'vec3 rotateVector(vec4 q, vec3 v)\n{\n    return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);\n}\n\nvec4 quatFromAxisAngle(vec3 axis, float angle)\n{\n    float halfAngle = angle * 0.5;\n    return vec4(axis.xyz * sin(halfAngle), cos(halfAngle));\n}\n'
 
+// PrefabBufferGeometry 不需要
+
 BAS.Utils = {
   // 传入数据 THREE.Geometry 类型, 目的：获取并分离 顶点数据
   separateFaces: function (bufferGeometry: THREE.BufferGeometry) {
@@ -106,50 +108,77 @@ BAS.Utils = {
       bufferGeometry.setIndex(new THREE.BufferAttribute(newIndexArray as Uint16Array, 1))
     }
   },
+
+  computeCentroid: (bufferGeometry: THREE.BufferGeometry, faceIndex: number): THREE.Vector3 => {
+    const indexAttribute = bufferGeometry.getIndex()
+    const positionAttribute = bufferGeometry.getAttribute('position')
+    if (!indexAttribute || !positionAttribute) {
+      throw new Error('Index or position attribute is missing')
+    }
+
+    const faceIndices = [
+      indexAttribute.getX(faceIndex * 3),
+      indexAttribute.getX(faceIndex * 3 + 1),
+      indexAttribute.getX(faceIndex * 3 + 2),
+    ]
+
+    const centroid = new THREE.Vector3()
+    for (const index of faceIndices) {
+      const vertex = new THREE.Vector3().fromBufferAttribute(positionAttribute, index)
+      centroid.add(vertex)
+    }
+
+    centroid.divideScalar(3)
+    return centroid
+  },
 }
 
-export class ModelBufferGeometry extends THREE.BufferGeometry {
+class ModelBufferGeometry extends THREE.BufferGeometry {
   modelGeometry: THREE.BufferGeometry
-  //   faceCount: number
-  //   vertexCount: number
+  faceCount: number
+  vertexCount: number
 
   constructor(model: THREE.BufferGeometry) {
-    super(model)
+    super()
     // 确认传入的是BufferGeometry类型后进行如下操作
     this.modelGeometry = model
-    // 通过顶点位置属性的count属性计算面的数量，假设每3个顶点组成一个面
-    // this.faceCount = model.getAttribute('position').count / 3
-    // this.vertexCount = model.getAttribute('position').count
+    // 计算面的数量，注意要确保index存在，这里做了简单的默认处理（可根据实际完善错误处理）
+    this.faceCount = (this.modelGeometry.index?.count || 0) / 3
+    // 计算顶点数量，通过位置属性的count属性除以3得到（每个顶点3个分量）
+    this.vertexCount = this.modelGeometry.attributes.position.count / 3
 
-    // const indexAttribute = model.getIndex()
-    // if (indexAttribute) {
-    //   this.setIndex(indexAttribute)
-    // } else {
-    //   // 若不存在索引属性，可根据需求处理，比如创建默认索引等
-    //   console.warn('传入的BufferGeometry缺少索引属性，可能影响渲染效果')
-    //   // 以下是简单创建顺序索引的示例，实际可能需更复杂处理
-    //   const positionCount = model.getAttribute('position').count
-    //   const defaultIndexArray = new Uint16Array(positionCount)
-    //   for (let i = 0; i < positionCount; i++) {
-    //     defaultIndexArray[i] = i
-    //   }
-    //   this.setIndex(new THREE.BufferAttribute(defaultIndexArray, 1))
-    // }
+    this.bufferIndices()
+    this.bufferPositions()
+  }
+  bufferIndices(): void {
+    const indexBuffer = new Uint32Array(this.faceCount * 3)
+    this.setIndex(new THREE.BufferAttribute(indexBuffer, 1))
+
+    const indexAttribute = this.modelGeometry.getIndex()
+    for (let i = 0; i < this.faceCount; i++) {
+      const indexA = indexAttribute?.getX(i * 3) || 0
+      const indexB = indexAttribute?.getX(i * 3 + 1) || 0
+      const indexC = indexAttribute?.getX(i * 3 + 2) || 0
+
+      indexBuffer[i * 3] = indexA
+      indexBuffer[i * 3 + 1] = indexB
+      indexBuffer[i * 3 + 2] = indexC
+    }
   }
 
   createAttribute(name: string, itemSize: number) {
-    const positionAttribute = this.modelGeometry.getAttribute('position')
+    const positionAttribute = this.getAttribute('position')
     // 如果没能获取到位置属性（意味着传入的 BufferGeometry 数据可能不完整或者不符合预期），则输出警告信息提示缺少位置属性，无法准确创建其他属性，并返回 null
     if (!positionAttribute) {
       console.warn('传入的BufferGeometry缺少位置属性，无法准确创建其他属性')
       return null
     }
-    // 获取顶点位置属性的 count 值作为顶点数量，用于确定要创建的属性数据数组的大小
-    const vertexCount = positionAttribute.count
     // 基于获取到的顶点数量和传入的每个元素的分量数（itemSize）创建一个新的 Float32Array 类型的数组，这个数组将用于存储具体的属性数据（比如纹理坐标、法线等其他几何属性的数据）
-    const buffer = new Float32Array(vertexCount * itemSize)
+    const buffer = new Float32Array(this.vertexCount * itemSize)
     // 将创建好的数组 buffer 包装成 BufferAttribute 对象，指定每个元素的分量数为 itemSize，使其符合 BufferGeometry 中属性数据的存储格式要求
     const attribute = new THREE.BufferAttribute(buffer, itemSize)
+
+    this.modelGeometry.setAttribute(name, attribute)
 
     if (!this.modelGeometry.getAttribute(name)) {
       // 如果传入的BufferGeometry已经有同名属性，先移除它
@@ -163,69 +192,66 @@ export class ModelBufferGeometry extends THREE.BufferGeometry {
 
     return attribute
   }
-}
 
-/**
-BAS.BaseAnimationMaterial = function (parameters: THREE.ShaderMaterialParameters = {}) {
-  THREE.ShaderMaterial.call(this)
+  bufferUVs() {
+    const uvAttribute =
+      this.modelGeometry.getAttribute('uv') || this.modelGeometry.createAttribute('uv', 2)
+    const uvBuffer = uvAttribute.array as Float32Array
+    const faceCount = (this.index?.count || 0) / 3
+    const indexAttribute = this.modelGeometry.getIndex()
 
-  this.shaderFunctions = []
-  this.shaderParameters = []
-  this.shaderVertexInit = []
-  this.shaderTransformNormal = []
-  this.shaderTransformPosition = []
+    for (let i = 0; i < faceCount; i++) {
+      const indexA = indexAttribute?.getX(i * 3) || 0
+      const indexB = indexAttribute?.getX(i * 3 + 1) || 0
+      const indexC = indexAttribute?.getX(i * 3 + 2) || 0
 
-  this.setValues(parameters)
-}
-BAS.BaseAnimationMaterial.prototype = Object.create(THREE.ShaderMaterial.prototype)
-BAS.BaseAnimationMaterial.prototype.constructor = BAS.BaseAnimationMaterial
+      const uvA = new THREE.Vector2().fromBufferAttribute(
+        uvAttribute as THREE.BufferAttribute,
+        indexA,
+      )
+      const uvB = new THREE.Vector2().fromBufferAttribute(
+        uvAttribute as THREE.BufferAttribute,
+        indexB,
+      )
+      const uvC = new THREE.Vector2().fromBufferAttribute(
+        uvAttribute as THREE.BufferAttribute,
+        indexC,
+      )
 
-// abstract
-BAS.BaseAnimationMaterial.prototype._concatVertexShader = function () {
-  return ''
-}
+      uvBuffer[indexA * 2] = uvA.x
+      uvBuffer[indexA * 2 + 1] = uvA.y
 
-BAS.BaseAnimationMaterial.prototype._concatFunctions = function () {
-  return this.shaderFunctions.join('\n')
-}
-BAS.BaseAnimationMaterial.prototype._concatParameters = function () {
-  return this.shaderParameters.join('\n')
-}
-BAS.BaseAnimationMaterial.prototype._concatVertexInit = function () {
-  return this.shaderVertexInit.join('\n')
-}
-BAS.BaseAnimationMaterial.prototype._concatTransformNormal = function () {
-  return this.shaderTransformNormal.join('\n')
-}
-BAS.BaseAnimationMaterial.prototype._concatTransformPosition = function () {
-  return this.shaderTransformPosition.join('\n')
-}
+      uvBuffer[indexB * 2] = uvB.x
+      uvBuffer[indexB * 2 + 1] = uvB.y
 
-BAS.BaseAnimationMaterial.prototype.setUniformValues = function (values: Record<string, any>) {
-  for (const key in values) {
-    if (key in this.uniforms) {
-      const uniform = this.uniforms[key]
-      const value = values[key]
+      uvBuffer[indexC * 2] = uvC.x
+      uvBuffer[indexC * 2 + 1] = uvC.y
+    }
 
-      // todo add matrix uniform types
-      switch (uniform.type) {
-        case 'c': // color
-          uniform.value.set(value)
-          break
-        case 'v2': // vectors
-        case 'v3':
-        case 'v4':
-          uniform.value.copy(value)
-          break
-        case 'f': // float
-        case 't': // texture
-        default:
-          uniform.value = value
-      }
+    if (!this.getAttribute('uv')) {
+      this.setAttribute('uv', uvAttribute)
+    }
+  }
+
+  bufferPositions() {
+    const positionAttribute =
+      this.modelGeometry.getAttribute('position') ||
+      this.modelGeometry.createAttribute('position', 3)
+    const positionBuffer = positionAttribute.array as Float32Array
+
+    for (let i = 0; i < this.vertexCount; i++) {
+      const vertex = new THREE.Vector3().fromBufferAttribute(positionAttribute, i)
+
+      positionBuffer[i * 3] = vertex.x
+      positionBuffer[i * 3 + 1] = vertex.y
+      positionBuffer[i * 3 + 2] = vertex.z
+    }
+
+    if (!this.getAttribute('position')) {
+      this.setAttribute('position', positionAttribute)
     }
   }
 }
-*/
 
 export class BaseAnimationMaterial extends THREE.ShaderMaterial {
   // 存储着色器函数代码片段的数组
@@ -238,19 +264,35 @@ export class BaseAnimationMaterial extends THREE.ShaderMaterial {
   shaderTransformNormal: string[]
   // 存储位置变换相关着色器代码片段的数组
   shaderTransformPosition: string[]
+  uniforms: { [key: string]: THREE.IUniform<any> } = {}
 
-  constructor(parameters: THREE.ShaderMaterialParameters = {}) {
-    super()
+  constructor(parameters: any, uniformValues: { [key: string]: any }) {
+    super(parameters)
 
     // 初始化各个着色器代码片段数组
+    // this.shaderFunctions = parameters.shaderFunctions
+    // this.shaderParameters = parameters.shaderParameters
+    // this.shaderVertexInit = parameters.shaderVertexInit
+    // this.shaderTransformNormal = parameters.shaderTransformPosition
+    // this.shaderTransformPosition = parameters.shaderTransformPosition
+
+    // this.uniforms = parameters.uniforms
+
     this.shaderFunctions = []
     this.shaderParameters = []
     this.shaderVertexInit = []
     this.shaderTransformNormal = []
     this.shaderTransformPosition = []
 
+    this.vertexShader = this._concatVertexShader()
+
+    console.log('aaaaaa')
+    console.log(parameters)
+    console.log(uniformValues)
+
     // 使用传入的参数设置材质的初始值
-    this.setValues(parameters)
+    // this.setValues(parameters)
+    this.setUniformValues(uniformValues)
   }
 
   // 抽象方法，用于拼接顶点着色器代码，目前返回空字符串，子类需要重写来实现具体逻辑
@@ -277,139 +319,79 @@ export class BaseAnimationMaterial extends THREE.ShaderMaterial {
   _concatTransformPosition(): string {
     return this.shaderTransformPosition.join('\n')
   }
-  setUniformValues(values: Record<string, any>) {
+  setUniformValues(values: { [key: string]: any }) {
     for (const key in values) {
       if (key in this.uniforms) {
         const uniform = this.uniforms[key]
         const value = values[key]
-
-        // 根据uniform的类型来设置对应的值，目前todo部分提示需要添加矩阵类型的处理逻辑
-        switch (uniform.type) {
-          case 'c': // 颜色类型
-            // if (THREE.Color.isColor(value)) {
-            //   uniform.value.set(value)
-            // } else {
-            //   console.warn(`期望传入颜色类型的值给uniform ${key}，实际传入类型不符`)
-            // }
-            break
-          case 'v2': // 二维向量类型
-          case 'v3': // 三维向量类型
-          case 'v4': // 四维向量类型
-            if (
-              value instanceof THREE.Vector2 ||
-              value instanceof THREE.Vector3 ||
-              value instanceof THREE.Vector4
-            ) {
-              uniform.value.copy(value)
-            } else {
-              console.warn(`期望传入向量类型的值给uniform ${key}，实际传入类型不符`)
+        if (uniform.value instanceof THREE.Color) {
+          if (value instanceof THREE.Color) {
+            uniform.value.copy(value)
+          } else {
+            console.warn(`Expected THREE.Color for uniform '${key}' but got ${typeof value}`)
+          }
+        } else if (
+          uniform.value instanceof THREE.Vector2 ||
+          uniform.value instanceof THREE.Vector3 ||
+          uniform.value instanceof THREE.Vector4
+        ) {
+          if (
+            value instanceof THREE.Vector2 ||
+            value instanceof THREE.Vector3 ||
+            value instanceof THREE.Vector4
+          ) {
+            if (uniform.value instanceof THREE.Vector2) {
+              ;(uniform.value as THREE.Vector2).copy(value as THREE.Vector2)
+            } else if (uniform.value instanceof THREE.Vector3) {
+              ;(uniform.value as THREE.Vector3).copy(value as THREE.Vector3)
+            } else if (uniform.value instanceof THREE.Vector4) {
+              ;(uniform.value as THREE.Vector4).copy(value as THREE.Vector4)
             }
-            break
-          case 'f': // 浮点类型
-          case 't': // 纹理类型
-          default:
+          } else {
+            console.warn(
+              `Expected appropriate THREE.Vector type for uniform '${key}' but got ${typeof value}`,
+            )
+          }
+        } else if (typeof uniform.value === 'number') {
+          if (typeof value === 'number') {
             uniform.value = value
+          } else {
+            console.warn(`Expected number for uniform '${key}' but got ${typeof value}`)
+          }
+        } else if (uniform.value instanceof THREE.Texture) {
+          if (value instanceof THREE.Texture) {
+            uniform.value = value
+          } else {
+            console.warn(`Expected THREE.Texture for uniform '${key}' but got ${typeof value}`)
+          }
+        } else {
+          console.warn(`Unrecognized uniform value type for uniform '${key}'`)
         }
       }
     }
   }
 }
 
-/*
-BAS.BasicAnimationMaterial = function (
-  parameters: THREE.ShaderMaterialParameters,
-  uniformValues: { [key: string]: any },
-) {
-  BAS.BaseAnimationMaterial.call(this, parameters)
-
-  const basicShader = THREE.ShaderLib['basic']
-
-  this.uniforms = THREE.UniformsUtils.merge([basicShader.uniforms, this.uniforms])
-  this.lights = false
-  this.vertexShader = this._concatVertexShader()
-  this.fragmentShader = basicShader.fragmentShader
-
-  // todo add missing default defines
-  // uniformValues.map && (this.defines['USE_MAP'] = '')
-  // uniformValues.normalMap && (this.defines['USE_NORMALMAP'] = '')
-
-  if (!this.defines) {
-    this.defines = {}
-  }
-  if (uniformValues.map) {
-    this.defines['USE_MAP'] = ''
-  }
-  if (uniformValues.normalMap) {
-    this.defines['USE_NORMALMAP'] = ''
-  }
-  this.setUniformValues(uniformValues)
+type UniformsObject = {
+  [key: string]: THREE.IUniform
 }
-BAS.BasicAnimationMaterial.prototype = Object.create(BAS.BaseAnimationMaterial.prototype)
-BAS.BasicAnimationMaterial.prototype.constructor = BAS.BasicAnimationMaterial
-
-BAS.BasicAnimationMaterial.prototype._concatVertexShader = function () {
-  // based on THREE.ShaderLib.phong
-  return [
-    THREE.ShaderChunk['common'],
-    THREE.ShaderChunk['uv_pars_vertex'],
-    THREE.ShaderChunk['uv2_pars_vertex'],
-    THREE.ShaderChunk['envmap_pars_vertex'],
-    THREE.ShaderChunk['color_pars_vertex'],
-    THREE.ShaderChunk['morphtarget_pars_vertex'],
-    THREE.ShaderChunk['skinning_pars_vertex'],
-    THREE.ShaderChunk['logdepthbuf_pars_vertex'],
-
-    this._concatFunctions(),
-
-    this._concatParameters(),
-
-    'void main() {',
-
-    this._concatVertexInit(),
-
-    THREE.ShaderChunk['uv_vertex'],
-    THREE.ShaderChunk['uv2_vertex'],
-    THREE.ShaderChunk['color_vertex'],
-    THREE.ShaderChunk['skinbase_vertex'],
-
-    '	#ifdef USE_ENVMAP',
-
-    THREE.ShaderChunk['beginnormal_vertex'],
-
-    this._concatTransformNormal(),
-
-    THREE.ShaderChunk['morphnormal_vertex'],
-    THREE.ShaderChunk['skinnormal_vertex'],
-    THREE.ShaderChunk['defaultnormal_vertex'],
-
-    '	#endif',
-
-    THREE.ShaderChunk['begin_vertex'],
-
-    this._concatTransformPosition(),
-
-    THREE.ShaderChunk['morphtarget_vertex'],
-    THREE.ShaderChunk['skinning_vertex'],
-    THREE.ShaderChunk['project_vertex'],
-    THREE.ShaderChunk['logdepthbuf_vertex'],
-
-    THREE.ShaderChunk['worldpos_vertex'],
-    THREE.ShaderChunk['envmap_vertex'],
-
-    '}',
-  ].join('\n')
-}
-*/
 
 export class BasicAnimationMaterial extends BaseAnimationMaterial {
-  uniforms: Record<string, any>
+  uniforms: UniformsObject
   defines: { [key: string]: string } = {}
 
-  constructor(parameters: THREE.ShaderMaterialParameters, uniformValues: { [key: string]: any }) {
-    super(parameters)
+  constructor(parameters: any, uniformValues: { [key: string]: any }) {
     const basicShader = THREE.ShaderLib['basic']
+    // 获取基本着色器的uniforms作为初始的合并基础
+    let mergedUniforms: UniformsObject = { ...basicShader.uniforms }
+    super(parameters, uniformValues)
+    this.uniforms = uniformValues
     // 使用THREE.UniformsUtils.merge合并uniforms，确保类型正确
-    this.uniforms = THREE.UniformsUtils.merge([basicShader.uniforms, this.uniforms])
+    if (this.uniforms) {
+      mergedUniforms = THREE.UniformsUtils.merge([mergedUniforms, this.uniforms])
+    }
+
+    this.uniforms = mergedUniforms
     this.lights = false
     // 设置顶点着色器和片段着色器
     this.vertexShader = this._concatVertexShader()
@@ -422,6 +404,10 @@ export class BasicAnimationMaterial extends BaseAnimationMaterial {
     if (uniformValues.normalMap) {
       this.defines['USE_NORMALMAP'] = ''
     }
+
+    console.log('parameters')
+    console.log(parameters)
+    console.log(uniformValues)
 
     this.setUniformValues(uniformValues)
   }
@@ -479,124 +465,27 @@ export class BasicAnimationMaterial extends BaseAnimationMaterial {
   }
 }
 
-/*
-BAS.PhongAnimationMaterial = function (
-  parameters: THREE.MeshPhongMaterialParameters,
-  uniformValues: { [key: string]: any },
-) {
-  BAS.BaseAnimationMaterial.call(this, parameters)
-
-  const phongShader = THREE.ShaderLib['phong']
-
-  this.uniforms = THREE.UniformsUtils.merge([phongShader.uniforms, this.uniforms])
-  this.lights = true
-  this.vertexShader = this._concatVertexShader()
-  this.fragmentShader = phongShader.fragmentShader
-
-  // todo add missing default defines
-  //   uniformValues.map && (this.defines['USE_MAP'] = '')
-  //   uniformValues.normalMap && (this.defines['USE_NORMALMAP'] = '')
-
-  if (!this.defines) {
-    this.defines = {}
-  }
-  if (uniformValues.map) {
-    this.defines['USE_MAP'] = ''
-  }
-  if (uniformValues.normalMap) {
-    this.defines['USE_NORMALMAP'] = ''
-  }
-
-  this.setUniformValues(uniformValues)
-}
-BAS.PhongAnimationMaterial.prototype = Object.create(BAS.BaseAnimationMaterial.prototype)
-BAS.PhongAnimationMaterial.prototype.constructor = BAS.PhongAnimationMaterial
-
-BAS.PhongAnimationMaterial.prototype._concatVertexShader = function () {
-  // based on THREE.ShaderLib.phong
-  return [
-    '#define PHONG',
-
-    'varying vec3 vViewPosition;',
-
-    '#ifndef FLAT_SHADED',
-
-    '	varying vec3 vNormal;',
-
-    '#endif',
-
-    THREE.ShaderChunk['common'],
-    THREE.ShaderChunk['uv_pars_vertex'],
-    THREE.ShaderChunk['uv2_pars_vertex'],
-    THREE.ShaderChunk['displacementmap_pars_vertex'],
-    THREE.ShaderChunk['envmap_pars_vertex'],
-    THREE.ShaderChunk['lights_phong_pars_vertex'],
-    THREE.ShaderChunk['color_pars_vertex'],
-    THREE.ShaderChunk['morphtarget_pars_vertex'],
-    THREE.ShaderChunk['skinning_pars_vertex'],
-    THREE.ShaderChunk['shadowmap_pars_vertex'],
-    THREE.ShaderChunk['logdepthbuf_pars_vertex'],
-
-    this._concatFunctions(),
-
-    this._concatParameters(),
-
-    'void main() {',
-
-    this._concatVertexInit(),
-
-    THREE.ShaderChunk['uv_vertex'],
-    THREE.ShaderChunk['uv2_vertex'],
-    THREE.ShaderChunk['color_vertex'],
-    THREE.ShaderChunk['beginnormal_vertex'],
-
-    this._concatTransformNormal(),
-
-    THREE.ShaderChunk['morphnormal_vertex'],
-    THREE.ShaderChunk['skinbase_vertex'],
-    THREE.ShaderChunk['skinnormal_vertex'],
-    THREE.ShaderChunk['defaultnormal_vertex'],
-
-    '#ifndef FLAT_SHADED', // Normal computed with derivatives when FLAT_SHADED
-
-    '	vNormal = normalize( transformedNormal );',
-
-    '#endif',
-
-    THREE.ShaderChunk['begin_vertex'],
-
-    this._concatTransformPosition(),
-
-    THREE.ShaderChunk['displacementmap_vertex'],
-    THREE.ShaderChunk['morphtarget_vertex'],
-    THREE.ShaderChunk['skinning_vertex'],
-    THREE.ShaderChunk['project_vertex'],
-    THREE.ShaderChunk['logdepthbuf_vertex'],
-
-    '	vViewPosition = - mvPosition.xyz;',
-
-    THREE.ShaderChunk['worldpos_vertex'],
-    THREE.ShaderChunk['envmap_vertex'],
-    THREE.ShaderChunk['lights_phong_vertex'],
-    THREE.ShaderChunk['shadowmap_vertex'],
-
-    '}',
-  ].join('\n')
-}
-*/
-
 export class PhongAnimationMaterial extends BaseAnimationMaterial {
   // 明确声明uniforms和defines的类型
-  uniforms: Record<string, any>
+  uniforms: UniformsObject = {}
   defines: { [key: string]: string } = {}
 
-  constructor(parameters: THREE.MeshPhongMaterialParameters, uniformValues: AnyKeyValueObject) {
-    super(parameters)
+  constructor(
+    parameters: THREE.MeshPhongMaterialParameters,
+    uniformValues: { [key: string]: any },
+  ) {
+    super(parameters, uniformValues)
 
     const phongShader = THREE.ShaderLib['phong']
 
+    let mergedUniforms: UniformsObject = { ...phongShader.uniforms }
+
+    if (this.uniforms) {
+      mergedUniforms = THREE.UniformsUtils.merge([mergedUniforms, this.uniforms])
+    }
+
     // 合并uniforms，确保类型正确
-    this.uniforms = THREE.UniformsUtils.merge([phongShader.uniforms, this.uniforms])
+    this.uniforms = mergedUniforms
     this.lights = true
 
     // 设置顶点着色器和片段着色器
@@ -688,7 +577,82 @@ export class PhongAnimationMaterial extends BaseAnimationMaterial {
 
 export class SlideGeometry extends ModelBufferGeometry {
   constructor(model: THREE.BufferGeometry) {
+    /*
+    在 SlideGeometry 类的构造函数里，通过 super(model) 调用了父类（ModelBufferGeometry）的构造函数，并将 model（它是 THREE.BufferGeometry 类型的实例）传递给父类。父类（假设 ModelBufferGeometry 的构造函数实现正确）会接收这个 model 参数，并在其构造函数内部将其赋值给自身的属性（比如像 this.modelGeometry = model; 这样的操作，具体取决于 ModelBufferGeometry 构造函数的实现），以便后续在父类的各个方法中使用这个传入的几何模型数据
+    */
     super(model)
+    this.bufferPositions()
+  }
+
+  bufferPositions() {
+    // 获取position属性的BufferAttribute，如果不存在则创建一个新的
+    // const positionAttribute = this.getAttribute('position') || this.createAttribute('position', 3)
+    const positionAttribute = this.modelGeometry.getAttribute('position')
+    const positionBuffer = positionAttribute.array as Float32Array
+    const faceCount = (this.modelGeometry.index?.count || 0) / 3
+    const indexAttribute = this.modelGeometry.getIndex()
+
+    for (let i = 0; i < faceCount; i++) {
+      const indexA = indexAttribute?.getX(i * 3) || 0
+      const indexB = indexAttribute?.getX(i * 3 + 1) || 0
+      const indexC = indexAttribute?.getX(i * 3 + 2) || 0
+
+      const a = new THREE.Vector3().fromBufferAttribute(positionAttribute, indexA)
+      const b = new THREE.Vector3().fromBufferAttribute(positionAttribute, indexB)
+      const c = new THREE.Vector3().fromBufferAttribute(positionAttribute, indexC)
+
+      // const vertexA = [
+      //   this.getAttribute('position').getX(indexA * 3),
+      //   this.getAttribute('position').getY(indexA * 3),
+      //   this.getAttribute('position').getZ(indexA * 3),
+      // ]
+      // const vertexB = [
+      //   this.getAttribute('position').getX(indexB * 3),
+      //   this.getAttribute('position').getY(indexB * 3),
+      //   this.getAttribute('position').getZ(indexB * 3),
+      // ]
+      // const vertexC = [
+      //   this.getAttribute('position').getX(indexC * 3),
+      //   this.getAttribute('position').getY(indexC * 3),
+      //   this.getAttribute('position').getZ(indexC * 3),
+      // ]
+
+      // const centroid = new THREE.Vector3()
+      // centroid.x = (vertexA[0] + vertexB[0] + vertexC[0]) / 3
+      // centroid.y = (vertexA[1] + vertexB[1] + vertexC[1]) / 3
+      // centroid.z = (vertexA[2] + vertexB[2] + vertexC[2]) / 3
+
+      const faceIndices = [
+        indexAttribute?.getX(i * 3),
+        indexAttribute?.getX(i * 3 + 1),
+        indexAttribute?.getX(i * 3 + 2),
+      ]
+
+      const centroid = new THREE.Vector3()
+      for (const index of faceIndices) {
+        const vertex = new THREE.Vector3().fromBufferAttribute(positionAttribute, index as number)
+        centroid.add(vertex)
+      }
+
+      centroid.divideScalar(3)
+
+      positionBuffer[indexA * 3] = a.x - centroid.x
+      positionBuffer[indexA * 3 + 1] = a.y - centroid.y
+      positionBuffer[indexA * 3 + 2] = a.z - centroid.z
+
+      positionBuffer[indexB * 3] = b.x - centroid.x
+      positionBuffer[indexB * 3 + 1] = b.y - centroid.y
+      positionBuffer[indexB * 3 + 2] = b.z - centroid.z
+
+      positionBuffer[indexC * 3] = c.x - centroid.x
+      positionBuffer[indexC * 3 + 1] = c.y - centroid.y
+      positionBuffer[indexC * 3 + 2] = c.z - centroid.z
+    }
+
+    // 如果是新创建的position属性，需要设置其更新标识
+    if (!this.getAttribute('position')) {
+      this.setAttribute('position', positionAttribute)
+    }
   }
 }
 
