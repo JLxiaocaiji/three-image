@@ -9,6 +9,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
 import { onMounted } from 'vue';
 import BAS from "./bas"
+import { vertexShader, fragmentShader } from "./bas"
 import { Power0, gsap } from 'gsap'
 
 const utils = {
@@ -141,6 +142,7 @@ onMounted(() => {
     show(deviceInfo);
 })
 
+// 返回 vec3 cubicBezier(vec3 p0, vec3 c0, vec3 c1, vec3 p1, float t) 等
 const _concatFunctions = () => {
   const shaderFunctions =  [
         BAS.ShaderChunk['cubic_bezier'],
@@ -207,10 +209,6 @@ const _concatVertexShader = (animationPhase: string) => {
       _concatVertexInit(),
 
       THREE.ShaderChunk[ "uv_vertex" ],
-
-      "#if defined(USE_MAP) || defined(USE_BUMPMAP) || defined(USE_NORMALMAP) || defined(USE_SPECULARMAP) || defined(USE_ALPHAMAP) || defined(USE_EMISSIVEMAP) || defined(USE_ROUGHNESSMAP) || defined(USE_METALNESSMAP)",
-      "vUv = uv * offsetRepeat.zw + offsetRepeat.xy;",
-      "#endif",
       THREE.ShaderChunk[ "uv2_vertex" ],
       THREE.ShaderChunk[ "color_vertex" ],
       THREE.ShaderChunk[ "skinbase_vertex" ],
@@ -258,13 +256,13 @@ const createAttribute = (geometry, name, itemSize) => {
 }
 
 // 计算每个面的质心
-const computeCentroid = (indices, vertices, i: number) => {
+const computeCentroid = (indices, positions, i: number) => {
     const index1 = indices[i];
     const index2 = indices[i + 1];
     const index3 = indices[i + 2];
-    const vertex1 = [vertices[index1 * 3], vertices[index1 * 3 + 1], vertices[index1 * 3 + 2]];
-    const vertex2 = [vertices[index2 * 3], vertices[index2 * 3 + 1], vertices[index2 * 3 + 2]];
-    const vertex3 = [vertices[index3 * 3], vertices[index3 * 3 + 1], vertices[index3 * 3 + 2]];
+    const vertex1 = [positions[index1 * 3], positions[index1 * 3 + 1], positions[index1 * 3 + 2]];
+    const vertex2 = [positions[index2 * 3], positions[index2 * 3 + 1], positions[index2 * 3 + 2]];
+    const vertex3 = [positions[index3 * 3], positions[index3 * 3 + 1], positions[index3 * 3 + 2]];
 
     const vector = new THREE.Vector3(
       vertex1[0] + vertex2[0] + vertex3[0],
@@ -275,100 +273,64 @@ const computeCentroid = (indices, vertices, i: number) => {
     return vector
 }
 
-const separateFaces = (bufferGeometry: THREE.BufferGeometry) => {
-    const positionAttribute = bufferGeometry.getAttribute('position');
-    if (!positionAttribute) {
-        console.error('Position attribute not found in BufferGeometry');
-        return;
+// 手动分离每个面的顶点
+const separateFaces = (originalGeometry: THREE.BufferGeometry) => {
+    const originalPositionAttribute = originalGeometry.attributes.position;
+    const originalPositions = originalPositionAttribute.array;
+    const originalIndices = originalGeometry.index? originalGeometry.index.array : null;
+
+    const newVertices = [];
+    const newIndices = [];
+    let currentIndex = 0;
+
+    for (let i = 0; i < originalIndices.length; i += 3) {
+      const index1 = originalIndices[i];
+      const index2 = originalIndices[i + 1];
+      const index3 = originalIndices[i + 2];
+
+      const vertex1 = new THREE.Vector3(
+          originalPositions[index1 * 3],
+          originalPositions[index1 * 3 + 1],
+          originalPositions[index1 * 3 + 2]
+      );
+      const vertex2 = new THREE.Vector3(
+          originalPositions[index2 * 3],
+          originalPositions[index2 * 3 + 1],
+          originalPositions[index2 * 3 + 2]
+      );
+      const vertex3 = new THREE.Vector3(
+          originalPositions[index3 * 3],
+          originalPositions[index3 * 3 + 1],
+          originalPositions[index3 * 3 + 2]
+      );
+
+      newVertices.push(vertex1);
+      newVertices.push(vertex2);
+      newVertices.push(vertex3);
+
+      newIndices.push(currentIndex);
+      newIndices.push(currentIndex + 1);
+      newIndices.push(currentIndex + 2);
+
+      currentIndex += 3;
     }
 
-    const indexAttribute = bufferGeometry.index;
-    const indices = indexAttribute? indexAttribute.array : null;
-    const isIndexed =!!indexAttribute;
-
-    // 用于存储分离后面的新顶点数据的数组
-    const newVertices: number[] = [];
-    // 用于存储新的面索引数据（如果原来是索引方式的话）的数组
-    const newIndices: number[] = [];
-
-    // 记录当前新顶点数据的长度，用于后续计算新的面索引
-    let vertexCount = 0;
-
-    if (isIndexed) {
-        // 如果是索引方式的几何体
-        for (let i = 0; i < indexAttribute.count; i += 3) {
-            // 处理每个三角形面（假设索引数据按三角形面顺序排列）
-            const indexA = indices![i];
-            const indexB = indices![i + 1];
-            const indexC = indices![i + 2];
-
-            // 获取原始顶点位置数据（基于索引从位置缓冲区获取）
-            const vertexA: number[] = [
-                positionAttribute.array[indexA * 3],
-                positionAttribute.array[indexA * 3 + 1],
-                positionAttribute.array[indexA * 3 + 2]
-            ];
-            const vertexB: number[] = [
-                positionAttribute.array[indexB * 3],
-                positionAttribute.array[indexB * 3 + 1],
-                positionAttribute.array[indexB * 3 + 2]
-            ];
-            const vertexC: number[] = [
-                positionAttribute.array[indexC * 3],
-                positionAttribute.array[indexC * 3 + 1],
-                positionAttribute.array[indexC * 3 + 2]
-            ];
-
-            // 将复制的顶点数据添加到新顶点数组
-            newVertices.push(...vertexA);
-            newVertices.push(...vertexB);
-            newVertices.push(...vertexC);
-
-            // 计算并添加新的面索引到新索引数组
-            const newIndexA = vertexCount;
-            const newIndexB = vertexCount + 1;
-            const newIndexC = vertexCount + 2;
-            newIndices.push(newIndexA);
-            newIndices.push(newIndexB);
-            newIndices.push(newIndexC);
-
-            vertexCount += 3;
-        }
-
-        // 创建新的索引缓冲区属性并设置到bufferGeometry
-        const newIndexBuffer = new THREE.BufferAttribute(new Uint16Array(newIndices), 1);
-        bufferGeometry.index = newIndexBuffer;
-    } else {
-        // 如果是非索引方式的几何体（直接按顺序遍历顶点组成面）
-        for (let i = 0; i < positionAttribute.count; i += 3) {
-            // 获取原始顶点位置数据（每3个元素构成一个顶点的坐标数据）
-            const vertexA: number[] = [
-                positionAttribute.array[i * 3],
-                positionAttribute.array[i * 3 + 1],
-                positionAttribute.array[i * 3 + 2]
-            ];
-            const vertexB: number[] = [
-                positionAttribute.array[i * 3 + 3],
-                positionAttribute.array[i * 3 + 4],
-                positionAttribute.array[i * 3 + 5]
-            ];
-            const vertexC: number[] = [
-                positionAttribute.array[i * 3 + 6],
-                positionAttribute.array[i * 3 + 7],
-                positionAttribute.array[i * 3 + 8]
-            ];
-
-            // 将复制的顶点数据添加到新顶点数组
-            newVertices.push(...vertexA);
-            newVertices.push(...vertexB);
-            newVertices.push(...vertexC);
-
-            // 这里非索引方式下不需要更新索引，因为每个面的顶点顺序就是连续的
-        }
+    const newPositions = new Float32Array(newVertices.length * 3);
+    for (let i = 0; i < newVertices.length; i++) {
+        const vertex = newVertices[i];
+        newPositions[i * 3] = vertex.x;
+        newPositions[i * 3 + 1] = vertex.y;
+        newPositions[i * 3 + 2] = vertex.z;
     }
 
-    const newPositionBuffer = new THREE.BufferAttribute(new Float32Array(newVertices), 3);
-    bufferGeometry.setAttribute('position', newPositionBuffer);
+    const newPositionAttribute = new THREE.BufferAttribute(newPositions, 3);
+    const newIndexAttribute = new THREE.BufferAttribute(new Uint16Array(newIndices), 1);
+
+    // 创建新的BufferGeometry并设置新的属性
+    const newBufferGeometry = new THREE.BufferGeometry();
+    newBufferGeometry.setAttribute('position', newPositionAttribute);
+    newBufferGeometry.setIndex(newIndexAttribute);
+    return newBufferGeometry
 }
 
 const bufferUVs = (bufferGeometry: THREE.BufferGeometry) => {
@@ -377,9 +339,6 @@ const bufferUVs = (bufferGeometry: THREE.BufferGeometry) => {
     const indexAttribute = bufferGeometry.index;
     const indices = indexAttribute? indexAttribute.array : null;
     const isIndexed =!!indexAttribute;
-
-    console.log("aaaa")
-    console.log(indexAttribute.count)
 
     if (isIndexed) {
         // 如果是索引方式的几何体
@@ -436,10 +395,10 @@ class Slide extends THREE.Mesh {
   image: any
 
   constructor(width: number, height: number, animationPhase: 'in' | 'out') {
-    const geometry = new THREE.PlaneGeometry(width, height, width * 2, height * 2)
+    const tempGeometry = new THREE.PlaneGeometry(width, height, width * 2, height * 2)
 
-    separateFaces(geometry)
-    bufferUVs(geometry)
+    const geometry = separateFaces(tempGeometry)
+    // bufferUVs(geometry)
 
     const aAnimation = createAttribute(geometry, 'aAnimation', 2);
     const aStartPosition = createAttribute(geometry, 'aStartPosition', 3);
@@ -460,9 +419,12 @@ class Slide extends THREE.Mesh {
     const tempPoint = new THREE.Vector3();
 
     const getControlPoint0 = (centroid: THREE.Vector3): THREE.Vector3 => {
+      // 共有 5 种返回值，分别是 1, -1, 0, -0, NaN. 代表的各是正数，负数，正零，负零，NaN
       const signY = Math.sign(centroid.y)
+      // 0.1 到 0.3 这个范围取随机数 * 50
       tempPoint.x = THREE.MathUtils.randFloat(0.1, 0.3) * 50
       tempPoint.y = signY * THREE.MathUtils.randFloat(0.1, 0.3) * 70
+      // 关于 0 对称的区间内的随机数，范围大小为 20
       tempPoint.z = THREE.MathUtils.randFloatSpread(20)
       return tempPoint
     }
@@ -478,10 +440,10 @@ class Slide extends THREE.Mesh {
 
     for (let i = 0, i2 = 0, i3 = 0, i4 = 0; i < geometry.index.count / 3; i++, i2 += 6, i3 += 9, i4 += 12) {
       const positionAttribute = geometry.getAttribute('position');
-      const vertices = positionAttribute.array;
+      const positions = positionAttribute.array;
       const indices = geometry.index?.array || [];
 
-      const centroid: THREE.Vector3 = computeCentroid(indices, vertices, i)
+      const centroid: THREE.Vector3 = computeCentroid(indices, positions, i*3)
 
       // Animation
       const duration = THREE.MathUtils.randFloat(minDuration, maxDuration)
@@ -540,284 +502,9 @@ class Slide extends THREE.Mesh {
     const tempUniforms = THREE.UniformsUtils.merge([basicShader.uniforms, { uTime: { value: 0 }}]);
     const uniformValues = new THREE.Texture()
 
-    console.log("uniformValues")
-    console.log(uniformValues)
-    console.log(tempUniforms)
-
     tempUniforms.map.value = uniformValues
 
     // const vertexShader = _concatVertexShader(animationPhase);
-    const vertexShader = `
-      #define PI 3.14159
-      #define PI2 6.28318
-      #define RECIPROCAL_PI 0.31830988618
-      #define RECIPROCAL_PI2 0.15915494
-      #define LOG2 1.442695
-      #define EPSILON 1e-6
-      #define saturate(a) clamp(a, 0.0, 1.0)
-      #define whiteCompliment(a) (1.0 - saturate(a))
-      float pow2(const in float x) { return x * x; }
-      float pow3(const in float x) { return x * x * x; }
-      float pow4(const in float x)
-      {
-          float x2 = x * x;
-          return x2 * x2;
-      }
-      float average(const in vec3 color) { return dot(color, vec3(0.3333)); }
-      struct IncidentLight
-      {
-          vec3 color;
-          vec3 direction;
-          bool visible;
-      };
-      struct ReflectedLight
-      {
-          vec3 directDiffuse;
-          vec3 directSpecular;
-          vec3 indirectDiffuse;
-          vec3 indirectSpecular;
-      };
-      struct GeometricContext
-      {
-          vec3 position;
-          vec3 normal;
-          vec3 viewDir;
-      };
-      vec3 transformDirection(in vec3 dir, in mat4 matrix)
-      {
-          return normalize((matrix * vec4(dir, 0.0)).xyz);
-      }
-      vec3 inverseTransformDirection(in vec3 dir, in mat4 matrix)
-      {
-          return normalize((vec4(dir, 0.0) * matrix).xyz);
-      }
-      vec3 projectOnPlane(in vec3 point, in vec3 pointOnPlane, in vec3 planeNormal)
-      {
-          float distance = dot(planeNormal, point - pointOnPlane);
-          return -distance * planeNormal + point;
-      }
-      float sideOfPlane(in vec3 point, in vec3 pointOnPlane, in vec3 planeNormal)
-      {
-          return sign(dot(point - pointOnPlane, planeNormal));
-      }
-      vec3 linePlaneIntersect(in vec3 pointOnLine, in vec3 lineDirection, in vec3 pointOnPlane, in vec3 planeNormal)
-      {
-          return lineDirection * (dot(planeNormal, pointOnPlane - pointOnLine) / dot(planeNormal, lineDirection)) + pointOnLine;
-      }
-
-      #if defined(USE_MAP) || defined(USE_BUMPMAP) || defined(USE_NORMALMAP) || defined(USE_SPECULARMAP) || defined(USE_ALPHAMAP) || defined(USE_EMISSIVEMAP) || defined(USE_ROUGHNESSMAP) || defined(USE_METALNESSMAP)
-      varying vec2 vUv;
-      uniform vec4 offsetRepeat;
-      #endif
-
-      #if defined(USE_LIGHTMAP) || defined(USE_AOMAP)
-      attribute vec2 uv2;
-      varying vec2 vUv2;
-      #endif
-      #if defined(USE_ENVMAP) && !defined(USE_BUMPMAP) && !defined(USE_NORMALMAP) && !defined(PHONG) && !defined(STANDARD)
-      varying vec3 vReflect;
-      uniform float refractionRatio;
-      #endif
-
-      #ifdef USE_COLOR
-      varying vec3 vColor;
-      #endif
-      #ifdef USE_MORPHTARGETS
-      #ifndef USE_MORPHNORMALS
-      uniform float morphTargetInfluences[8];
-      #else
-      uniform float morphTargetInfluences[4];
-      #endif
-      #endif
-      #ifdef USE_SKINNING
-      uniform mat4 bindMatrix;
-      uniform mat4 bindMatrixInverse;
-      #ifdef BONE_TEXTURE
-      uniform sampler2D boneTexture;
-      uniform int boneTextureWidth;
-      uniform int boneTextureHeight;
-      mat4 getBoneMatrix(const in float i)
-      {
-          float j = i * 4.0;
-          float x = mod(j, float(boneTextureWidth));
-          float y = floor(j / float(boneTextureWidth));
-          float dx = 1.0 / float(boneTextureWidth);
-          float dy = 1.0 / float(boneTextureHeight);
-          y = dy * (y + 0.5);
-          vec4 v1 = texture2D(boneTexture, vec2(dx * (x + 0.5), y));
-          vec4 v2 = texture2D(boneTexture, vec2(dx * (x + 1.5), y));
-          vec4 v3 = texture2D(boneTexture, vec2(dx * (x + 2.5), y));
-          vec4 v4 = texture2D(boneTexture, vec2(dx * (x + 3.5), y));
-          mat4 bone = mat4(v1, v2, v3, v4);
-          return bone;
-      }
-      #else
-      uniform mat4 boneGlobalMatrices[MAX_BONES];
-      mat4 getBoneMatrix(const in float i)
-      {
-          mat4 bone = boneGlobalMatrices[int(i)];
-          return bone;
-      }
-      #endif
-      #endif
-
-      #ifdef USE_LOGDEPTHBUF
-      #ifdef USE_LOGDEPTHBUF_EXT
-      varying float vFragDepth;
-      #endif
-      uniform float logDepthBufFC;
-      #endif
-      vec3 cubicBezier(vec3 p0, vec3 c0, vec3 c1, vec3 p1, float t)
-      {
-          vec3 tp;
-          float tn = 1.0 - t;
-
-          tp.xyz = tn * tn * tn * p0.xyz + 3.0 * tn * tn * t * c0.xyz + 3.0 * tn * t * t * c1.xyz + t * t * t * p1.xyz;
-
-          return tp;
-      }
-
-      float ease(float t, float b, float c, float d)
-      {
-          if ((t /= d / 2.0) < 1.0)
-              return c / 2.0 * t * t * t + b;
-          return c / 2.0 * ((t -= 2.0) * t * t + 2.0) + b;
-      }
-
-      vec3 rotateVector(vec4 q, vec3 v)
-      {
-          return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-      }
-
-      vec4 quatFromAxisAngle(vec3 axis, float angle)
-      {
-          float halfAngle = angle * 0.5;
-          return vec4(axis.xyz * sin(halfAngle), cos(halfAngle));
-      }
-
-      uniform float uTime;
-      attribute vec2 aAnimation;
-      attribute vec3 aStartPosition;
-      attribute vec3 aControl0;
-      attribute vec3 aControl1;
-      attribute vec3 aEndPosition;
-      void main()
-      {
-          float tDelay = aAnimation.x;
-          float tDuration = aAnimation.y;
-          float tTime = clamp(uTime - tDelay, 0.0, tDuration);
-          float tProgress = ease(tTime, 0.0, 1.0, tDuration);
-      #if defined(USE_MAP) || defined(USE_BUMPMAP) || defined(USE_NORMALMAP) || defined(USE_SPECULARMAP) || defined(USE_ALPHAMAP) || defined(USE_EMISSIVEMAP) || defined(USE_ROUGHNESSMAP) || defined(USE_METALNESSMAP)
-          vUv = uv * offsetRepeat.zw + offsetRepeat.xy;
-      #endif
-      #if defined(USE_LIGHTMAP) || defined(USE_AOMAP)
-          vUv2 = uv2;
-      #endif
-      #ifdef USE_COLOR
-          vColor.xyz = color.xyz;
-      #endif
-      #ifdef USE_SKINNING
-          mat4 boneMatX = getBoneMatrix(skinIndex.x);
-          mat4 boneMatY = getBoneMatrix(skinIndex.y);
-          mat4 boneMatZ = getBoneMatrix(skinIndex.z);
-          mat4 boneMatW = getBoneMatrix(skinIndex.w);
-      #endif
-      #ifdef USE_ENVMAP
-
-          vec3 objectNormal = vec3(normal);
-
-      #ifdef USE_MORPHNORMALS
-          objectNormal += (morphNormal0 - normal) * morphTargetInfluences[0];
-          objectNormal += (morphNormal1 - normal) * morphTargetInfluences[1];
-          objectNormal += (morphNormal2 - normal) * morphTargetInfluences[2];
-          objectNormal += (morphNormal3 - normal) * morphTargetInfluences[3];
-      #endif
-
-      #ifdef USE_SKINNING
-          mat4 skinMatrix = mat4(0.0);
-          skinMatrix += skinWeight.x * boneMatX;
-          skinMatrix += skinWeight.y * boneMatY;
-          skinMatrix += skinWeight.z * boneMatZ;
-          skinMatrix += skinWeight.w * boneMatW;
-          skinMatrix = bindMatrixInverse * skinMatrix * bindMatrix;
-          objectNormal = vec4(skinMatrix * vec4(objectNormal, 0.0)).xyz;
-      #endif
-
-      #ifdef FLIP_SIDED
-          objectNormal = -objectNormal;
-      #endif
-          vec3 transformedNormal = normalMatrix * objectNormal;
-
-      #endif
-
-          vec3 transformed = vec3(position);
-
-          transformed *= 1.0 - tProgress;
-          transformed += cubicBezier(aStartPosition, aControl0, aControl1, aEndPosition, tProgress);
-      #ifdef USE_MORPHTARGETS
-          transformed += (morphTarget0 - position) * morphTargetInfluences[0];
-          transformed += (morphTarget1 - position) * morphTargetInfluences[1];
-          transformed += (morphTarget2 - position) * morphTargetInfluences[2];
-          transformed += (morphTarget3 - position) * morphTargetInfluences[3];
-      #ifndef USE_MORPHNORMALS
-          transformed += (morphTarget4 - position) * morphTargetInfluences[4];
-          transformed += (morphTarget5 - position) * morphTargetInfluences[5];
-          transformed += (morphTarget6 - position) * morphTargetInfluences[6];
-          transformed += (morphTarget7 - position) * morphTargetInfluences[7];
-      #endif
-      #endif
-
-      #ifdef USE_SKINNING
-          vec4 skinVertex = bindMatrix * vec4(transformed, 1.0);
-          vec4 skinned = vec4(0.0);
-          skinned += boneMatX * skinVertex * skinWeight.x;
-          skinned += boneMatY * skinVertex * skinWeight.y;
-          skinned += boneMatZ * skinVertex * skinWeight.z;
-          skinned += boneMatW * skinVertex * skinWeight.w;
-          skinned = bindMatrixInverse * skinned;
-      #endif
-
-      #ifdef USE_SKINNING
-          vec4 mvPosition = modelViewMatrix * skinned;
-      #else
-          vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);
-      #endif
-          gl_Position = projectionMatrix * mvPosition;
-
-      #ifdef USE_LOGDEPTHBUF
-          gl_Position.z = log2(max(EPSILON, gl_Position.w + 1.0)) * logDepthBufFC;
-      #ifdef USE_LOGDEPTHBUF_EXT
-          vFragDepth = 1.0 + gl_Position.w;
-      #else
-          gl_Position.z = (gl_Position.z - 1.0) * gl_Position.w;
-      #endif
-      #endif
-
-      #if defined(USE_ENVMAP) || defined(PHONG) || defined(STANDARD) || defined(LAMBERT) || defined(USE_SHADOWMAP)
-      #ifdef USE_SKINNING
-          vec4 worldPosition = modelMatrix * skinned;
-      #else
-          vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
-      #endif
-      #endif
-
-      #if defined(USE_ENVMAP) && !defined(USE_BUMPMAP) && !defined(USE_NORMALMAP) && !defined(PHONG) && !defined(STANDARD)
-          vec3 cameraToVertex = normalize(worldPosition.xyz - cameraPosition);
-          vec3 worldNormal = inverseTransformDirection(transformedNormal, viewMatrix);
-      #ifdef ENVMAP_MODE_REFLECTION
-          vReflect = reflect(cameraToVertex, worldNormal);
-      #else
-          vReflect = refract(cameraToVertex, worldNormal, refractionRatio);
-      #endif
-      #endif
-      }
-    `
-
-
-    // console.log("vertexShader")
-    // console.log(vertexShader)
-    // console.log("fragmentShader")
-    // console.log(fragmentShader)
 
     const material = new THREE.ShaderMaterial({
       vertexShader: vertexShader,
@@ -829,8 +516,6 @@ class Slide extends THREE.Mesh {
       },
       side: THREE.DoubleSide,
     })
-
-    // material.uniforms = uniforms
 
     console.log("geometry")
     console.log(geometry)
@@ -970,19 +655,21 @@ const show = (deviceInfo: Record<string, any>) => {
 
   const l1 = new THREE.ImageLoader();
 	l1.setCrossOrigin('Anonymous');
-	l1.load('./images/spring.png', function(image) {
-    console.log(image)
-    // slide.setImage(image)
-	},
-  undefined,
-  function (e) {
-  console.log("image");
-		console.error( 'An error happened.', e );
-	})
+	l1.load('./images/spring.png',
+    function(image) {
+      console.log(image)
+      slide.setImage(image)
+    },
+    undefined,
+    function (e) {
+      console.log("image");
+      console.error( 'An error happened.', e );
+    }
+  )
 
   root.scene.add(slide)
 
-  const tl = gsap.timeline({ repeat: -1, repeatDelay: 1.0, yoyo: true })
+  const tl = gsap.timeline({ repeat: -1, repeatDelay: 1, yoyo: true })
 
   tl.add(slide.transition(), 0)
 
