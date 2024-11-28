@@ -170,33 +170,34 @@ attribute vec3 aControl0;
 attribute vec3 aControl1;
 attribute vec3 aEndPosition;
 void main() {
-float tDelay = aAnimation.x;
-float tDuration = aAnimation.y;
-float tTime = clamp(uTime - tDelay, 0.0, tDuration);
-float tProgress = ease(tTime, 0.0, 1.0, tDuration);
-#if defined( USE_MAP ) || defined( USE_BUMPMAP ) || defined( USE_NORMALMAP ) || defined( USE_SPECULARMAP ) || defined( USE_ALPHAMAP ) || defined( USE_EMISSIVEMAP ) || defined( USE_ROUGHNESSMAP ) || defined( USE_METALNESSMAP )
-	vUv = uv * offsetRepeat.zw + offsetRepeat.xy;
-#endif
+  float tDelay = aAnimation.x;
+  float tDuration = aAnimation.y;
+  float tTime = clamp(uTime - tDelay, 0.0, tDuration);
+  float tProgress = ease(tTime, 0.0, 1.0, tDuration);
 
-vec3 transformed = vec3( position );
+  #if defined( USE_MAP ) || defined( USE_BUMPMAP ) || defined( USE_NORMALMAP ) || defined( USE_SPECULARMAP ) || defined( USE_ALPHAMAP ) || defined( USE_EMISSIVEMAP ) || defined( USE_ROUGHNESSMAP ) || defined( USE_METALNESSMAP )
+    vUv = uv * offsetRepeat.zw + offsetRepeat.xy;
+  #endif
 
-transformed *= 1.0 - tProgress;
-transformed += cubicBezier(aStartPosition, aControl0, aControl1, aEndPosition, tProgress);
+  vec3 transformed = vec3( position );
 
-#ifdef USE_SKINNING
-	vec4 mvPosition = modelViewMatrix * skinned;
-#else
-	vec4 mvPosition = modelViewMatrix * vec4( transformed, 1.0 );
-#endif
+  transformed *= 1.0 - tProgress;
+  transformed += cubicBezier(aStartPosition, aControl0, aControl1, aEndPosition, tProgress);
 
-gl_Position = projectionMatrix * mvPosition;
+  #ifdef USE_SKINNING
+    vec4 mvPosition = modelViewMatrix * skinned;
+  #else
+    vec4 mvPosition = modelViewMatrix * vec4( transformed, 1.0 );
+  #endif
+
+  gl_Position = projectionMatrix * mvPosition;
 }
 `
 
 export const fragmentShader = /* wgsl */ `
-uniform vec3 diffuse;
-uniform float opacity;
-#ifndef FLAT_SHADED
+uniform vec3 diffuse;   // 三维向量，通常用于表示材质的漫反射颜色分量
+uniform float opacity;  // 浮点数，用于控制材质的不透明度，取值范围一般从 0（完全透明）到 1
+#ifndef FLAT_SHADED     // #include 语句引入了一系列预定义的代码片段
 	varying vec3 vNormal;
 #endif
 #include <common>
@@ -211,7 +212,7 @@ uniform float opacity;
 #include <specularmap_pars_fragment>
 #include <logdepthbuf_pars_fragment>
 void main() {
-	vec4 diffuseColor = vec4( diffuse, opacity );
+	vec4 diffuseColor = vec4( diffuse, opacity ); // vec4类型（包含四个分量的向量，通常用于表示颜色的 RGBA 值）
 	#include <logdepthbuf_fragment>
 	#include <map_fragment>
 	#include <color_fragment>
@@ -219,10 +220,10 @@ void main() {
 	#include <alphatest_fragment>
 	#include <specularmap_fragment>
 	ReflectedLight reflectedLight;
-	reflectedLight.directDiffuse = vec3( 0.0 );
-	reflectedLight.directSpecular = vec3( 0.0 );
-	reflectedLight.indirectDiffuse = diffuseColor.rgb;
-	reflectedLight.indirectSpecular = vec3( 0.0 );
+	reflectedLight.directDiffuse = vec3( 0.0 ); // 直接漫反射
+	reflectedLight.directSpecular = vec3( 0.0 );  // 直接高光反射
+	reflectedLight.indirectDiffuse = diffuseColor.rgb;  // 间接漫反射（indirectDiffuse）分量设置为diffuseColor.rgb，即材质的漫反射颜色部分
+	reflectedLight.indirectSpecular = vec3( 0.0 );  // 间接高光反射
 	#include <aomap_fragment>
 	vec3 outgoingLight = reflectedLight.indirectDiffuse;
 	#include <envmap_fragment>
