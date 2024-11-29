@@ -194,7 +194,7 @@ void main() {
 }
 `
 
-export const fragmentShader = /* wgsl */ `
+export const fragmentShader = `
 uniform vec3 diffuse;   // 三维向量，通常用于表示材质的漫反射颜色分量
 uniform float opacity;  // 浮点数，用于控制材质的不透明度，取值范围一般从 0（完全透明）到 1
 #ifndef FLAT_SHADED     // #include 语句引入了一系列预定义的代码片段
@@ -234,6 +234,69 @@ void main() {
 	#include <fog_fragment>
 }
 `
+
+const computeCentroid = (indices: number[], positions: number[], i: number): THREE.Vector3 => {
+  const index1 = indices[i]
+  const index2 = indices[i + 1]
+  const index3 = indices[i + 2]
+
+  // 获取每个顶点的位置
+  const vertex1 = new THREE.Vector3().fromArray(positions, index1 * 3)
+  const vertex2 = new THREE.Vector3().fromArray(positions, index2 * 3)
+  const vertex3 = new THREE.Vector3().fromArray(positions, index3 * 3)
+
+  // 计算质心：取三个顶点的坐标平均
+  const centroid = new THREE.Vector3()
+  centroid.add(vertex1).add(vertex2).add(vertex3).divideScalar(3)
+
+  return centroid
+}
+
+const getCentroidsForTriangles = (bufferGeometry: THREE.BufferGeometry): THREE.Vector3[] => {
+  const indices = bufferGeometry.index!.array // 可能是 undefined, 需要确保存在
+  const positions = bufferGeometry.getAttribute('position').array as number[]
+
+  const centroids: THREE.Vector3[] = []
+
+  // 遍历索引数组，过滤掉非三角形面
+  for (let i = 0; i < indices.length; i += 3) {
+    // 确保每面是三角形（3个顶点）
+    if (i + 2 < indices.length) {
+      const centroid = computeCentroid(indices, positions, i)
+      centroids.push(centroid)
+    }
+  }
+
+  return centroids
+}
+
+// 处理BufferGeometry，剔除非三角面并计算三角形面的质心
+export const filterAndComputeCentroids = (
+  bufferGeometry: THREE.BufferGeometry,
+): THREE.Vector3[] => {
+  const indices = bufferGeometry.index!.array // 获取索引数组
+  const positions = bufferGeometry.getAttribute('position').array as number[]
+
+  // 重新组织索引数组，仅保留三角面
+  const filteredIndices: number[] = []
+
+  for (let i = 0; i < indices.length; i += 3) {
+    // 检查面是否是三角形（每组三个索引）
+    if (i + 2 < indices.length) {
+      filteredIndices.push(indices[i], indices[i + 1], indices[i + 2])
+    }
+  }
+
+  // 创建新的 BufferGeometry，更新索引数组和顶点数据
+  bufferGeometry.setIndex(filteredIndices)
+  bufferGeometry.setAttribute('position', bufferGeometry.getAttribute('position'))
+
+  // 计算所有三角形面的质心
+  const centroids = getCentroidsForTriangles(bufferGeometry)
+  return centroids
+}
+
+// 使用示例：传入一个 bufferGeometry
 
 /*
 float average(const in vec3 color) { return dot(color, vec3(0.3333)); }

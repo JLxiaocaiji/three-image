@@ -132,8 +132,8 @@ class THREERoot {
 
 const deviceInfo = {
   devicePixelRatio: 1,
-  windowWidth: 600,
-  windowHeight: 500,
+  windowWidth: window.innerWidth,
+  windowHeight: window.innerHeight,
 }
 
 onMounted(() => {
@@ -244,7 +244,7 @@ const _concatVertexShader = (animationPhase: string) => {
 //   return uniforms
 // }
 
-const createAttribute = (geometry, name, itemSize) => {
+const createAttribute = (geometry: THREE.BufferGeometry, name: string, itemSize: number) => {
   const buffer = new Float32Array(geometry.attributes.position.count * itemSize)
   // const buffer = new Float32Array( geometry.index.count * itemSize);
   const attribute = new THREE.BufferAttribute(buffer, itemSize)
@@ -321,16 +321,13 @@ const separateFaces = (originalGeometry: THREE.BufferGeometry) => {
   }
 
   const newPositionAttribute = new THREE.BufferAttribute(newPositions, 3)
-  const newIndexAttribute = new THREE.BufferAttribute(new Uint16Array(newIndices), 1)
 
   // 创建新的BufferGeometry并设置新的属性
   // const newBufferGeometry = new THREE.BufferGeometry()
   originalGeometry.setAttribute('position', newPositionAttribute)
+  const newIndexAttribute = new THREE.BufferAttribute(new Uint32Array(newIndices), 1)
   originalGeometry.setIndex(newIndexAttribute)
-  // return newBufferGeometry
 }
-
-const bufferUVs = (bufferGeometry: THREE.BufferGeometry) => {}
 
 const handle = (bufferGeometry: THREE.BufferGeometry) => {
   // 用于存储重新组织后的顶点位置数据
@@ -348,26 +345,72 @@ const handle = (bufferGeometry: THREE.BufferGeometry) => {
 
   let currentIndex = 0
   while (currentIndex < indexAttribute.count) {
-    // 根据索引数组中后续元素是否存在来判断是三角形面还是四边形面，三角形面顶点数量为 3，四边形面通过两个三角形组成所以顶点数量为 6
-    const faceVertexCount = indexArray[currentIndex + 2] === undefined ? 3 : 6
-    for (let i = 0; i < faceVertexCount; i++) {
-      const index = indexArray[currentIndex + i]
-      // 处理顶点位置数据
-      const vertex = [
-        prePositions[index * 3],
-        prePositions[index * 3 + 1],
-        prePositions[index * 3 + 2],
-      ]
-      newVerticesArray.push(...vertex)
-      // 处理uv坐标数据
-      const uvCoord = [preUvs[index * 2], preUvs[index * 2 + 1]]
-      newUvArray.push(...uvCoord)
+    // 每个面由三个索引构成
+    const index1 = indexArray[currentIndex];
+    const index2 = indexArray[currentIndex + 1];
+    const index3 = indexArray[currentIndex + 2];
 
-      // 处理法线数据
-      const normal = [preNormals[index * 3], preNormals[index * 3 + 1], preNormals[index * 3 + 2]]
-      newNormalsArray.push(...normal)
-    }
-    currentIndex += faceVertexCount
+    // 提取原始位置数据（每个顶点的 x, y, z）
+    const vertex1 = [
+      prePositions[index1 * 3], prePositions[index1 * 3 + 1], prePositions[index1 * 3 + 2]
+    ];
+    const vertex2 = [
+      prePositions[index2 * 3], prePositions[index2 * 3 + 1], prePositions[index2 * 3 + 2]
+    ];
+    const vertex3 = [
+      prePositions[index3 * 3], prePositions[index3 * 3 + 1], prePositions[index3 * 3 + 2]
+    ];
+
+    // 提取原始法线数据
+    const normal1 = [
+      preNormals[index1 * 3], preNormals[index1 * 3 + 1], preNormals[index1 * 3 + 2]
+    ];
+    const normal2 = [
+      preNormals[index2 * 3], preNormals[index2 * 3 + 1], preNormals[index2 * 3 + 2]
+    ];
+    const normal3 = [
+      preNormals[index3 * 3], preNormals[index3 * 3 + 1], preNormals[index3 * 3 + 2]
+    ];
+
+    // 提取原始 UV 数据
+    const uv1 = [
+      preUvs[index1 * 2], preUvs[index1 * 2 + 1]
+    ];
+    const uv2 = [
+      preUvs[index2 * 2], preUvs[index2 * 2 + 1]
+    ];
+    const uv3 = [
+      preUvs[index3 * 2], preUvs[index3 * 2 + 1]
+    ];
+
+    // 将每个顶点的位置、法线和 UV 数据添加到新数组中
+    newVerticesArray.push(...vertex1, ...vertex2, ...vertex3);
+    newNormalsArray.push(...normal1, ...normal2, ...normal3);
+    newUvArray.push(...uv1, ...uv2, ...uv3);
+    // 继续处理下一个面
+    currentIndex += 3;
+
+
+    // 根据索引数组中后续元素是否存在来判断是三角形面还是四边形面，三角形面顶点数量为 3，四边形面通过两个三角形组成所以顶点数量为 6
+    // const faceVertexCount = indexArray[currentIndex + 2] === undefined ? 3 : 6
+    // for (let i = 0; i < faceVertexCount; i++) {
+    //   const index = indexArray[currentIndex + i]
+    //   // 处理顶点位置数据
+    //   const vertex = [
+    //     prePositions[index * 3],
+    //     prePositions[index * 3 + 1],
+    //     prePositions[index * 3 + 2],
+    //   ]
+    //   newVerticesArray.push(...vertex)
+    //   // 处理uv坐标数据
+    //   const uvCoord = [preUvs[index * 2], preUvs[index * 2 + 1]]
+    //   newUvArray.push(...uvCoord)
+
+    //   // 处理法线数据
+    //   const normal = [preNormals[index * 3], preNormals[index * 3 + 1], preNormals[index * 3 + 2]]
+    //   newNormalsArray.push(...normal)
+    // }
+    // currentIndex += faceVertexCount
   }
 
   bufferGeometry.setAttribute(
@@ -379,6 +422,54 @@ const handle = (bufferGeometry: THREE.BufferGeometry) => {
     'normal',
     new THREE.BufferAttribute(new Float32Array(newNormalsArray), 3),
   )
+
+  // 更新索引数组
+  const indexAttrArray = Array.from({ length: 144000 }, (item, index) => index);
+
+  // 将索引数组转换为 BufferAttribute, 一定是
+  bufferGeometry.index = new THREE.BufferAttribute(new Uint32Array(indexAttrArray), 1);
+  // bufferGeometry.setIndex(new THREE.BufferAttribute(new Uint32Array(indexAttrArray), 1))
+}
+
+const bufferPositions = (bufferGeometry: THREE.BufferGeometry) => {
+  const positions = bufferGeometry.getAttribute('position').array
+  const indices = bufferGeometry.index?.array || []
+
+  const tempArr = []
+  for ( let i = 0; i < bufferGeometry.index.count / 3; i++ ) {
+  // for ( let i = 0; i < 2; i++ ) {
+    const centroid: THREE.Vector3 = computeCentroid(indices, positions, i * 3)
+    // 第 i 个面 3 个顶点
+    const x1 = positions[i * 3]
+    const y1 = positions[i * 3 + 1]
+    const z1 = positions[i * 3 + 2]
+
+    const x2 = positions[(i + 1) * 3]
+    const y2 = positions[(i + 1) * 3 + 1]
+    const z2 = positions[(i + 1) * 3 + 2]
+
+    const x3 = positions[(i + 2) * 3]
+    const y3 = positions[(i + 2) * 3 + 1]
+    const z3 = positions[(i + 2) * 3 + 2]
+
+    tempArr[i * 3 * 3] = x1 - centroid.x
+    tempArr[(i * 3 + 1) * 3 + 1] = y1 - centroid.y
+    tempArr[(i * 3 + 2) * 3 + 2] = z1 - centroid.z
+
+    tempArr[(i * 3 + 1) * 3] = x2 - centroid.x
+    tempArr[(i * 3 + 1) * 3 + 1] = y2 - centroid.y
+    tempArr[(i * 3 + 1) * 3 + 2] = z2 - centroid.z
+
+    tempArr[(i * 3 + 2) * 3] = x3 - centroid.x
+    tempArr[(i * 3 + 2) * 3 + 1] = y3 - centroid.y
+    tempArr[(i * 3 + 2) * 3 + 2] = z3 - centroid.z
+
+    // console.log("face.a, face.b, face.c:", i, i + 1, i+ 2)
+    // console.log("face.a * 3, face.b * 3, face.c * 3:", i * 3 * 3, (i * 3 + 1) * 3, (i * 3 + 2) * 3)
+
+  }
+  const newPositionAttribute = new THREE.BufferAttribute(new Float32Array(tempArr), 3)
+  bufferGeometry.setAttribute('position', newPositionAttribute)
 }
 
 // 给 bufferGeometry 添加 shaderMaterial 示例
@@ -391,30 +482,49 @@ class Slide extends THREE.Mesh {
 
   constructor(width: number, height: number, animationPhase: 'in' | 'out') {
     const geometry = new THREE.PlaneGeometry(width, height, width * 2, height * 2)
+
     // separateFaces(geometry)
 
-    // bufferUVs(geometry)
+    handle(geometry)
 
-    // handle(geometry)
+    bufferPositions(geometry)
 
+    /**
+     * 自定义的顶点属性。通过 createAttribute 方法创建属性并绑定到几何体上。每个属性的第二个参数是每个顶点需要存储的数据量（例如，3 表示三维向量）
+     */
+    // 存储动画相关的数据（延迟时间和持续时间）
     const aAnimation = createAttribute(geometry, 'aAnimation', 2)
+    // 动画开始位置
     const aStartPosition = createAttribute(geometry, 'aStartPosition', 3)
+    // 贝塞尔曲线的控制点
     const aControl0 = createAttribute(geometry, 'aControl0', 3)
+    // 贝塞尔曲线的控制点
     const aControl1 = createAttribute(geometry, 'aControl1', 3)
+    // 动画结束位置
     const aEndPosition = createAttribute(geometry, 'aEndPosition', 3)
 
+    // 动画的最短持续时间
     const minDuration = 0.8
+    // 动画的最长持续时间
     const maxDuration = 1.2
+    // 计算动画的延迟时间
     const maxDelayX = 0.9
+    // 计算动画的延迟时间
     const maxDelayY = 0.125
+    // 调整延迟和持续时间的变化范围，影响动画的随机性
     const stretch = 0.11
 
+    /**
+     * 这四个 THREE.Vector3 对象分别用于存储每个面的位置以及贝塞尔曲线的控制点
+     */
     const startPosition = new THREE.Vector3()
     const control0 = new THREE.Vector3()
     const control1 = new THREE.Vector3()
     const endPosition = new THREE.Vector3()
+    // 临时的 Vector3 对象，计算控制点时存储结果
     const tempPoint = new THREE.Vector3()
 
+    // 根据每个面的质心（centroid）计算并返回控制点生成贝塞尔曲线
     const getControlPoint0 = (centroid: THREE.Vector3): THREE.Vector3 => {
       // 共有 5 种返回值，分别是 1, -1, 0, -0, NaN. 代表的各是正数，负数，正零，负零，NaN
       const signY = Math.sign(centroid.y)
@@ -426,6 +536,7 @@ class Slide extends THREE.Mesh {
       return tempPoint
     }
 
+    // 根据每个面的质心（centroid）计算并返回控制点生成贝塞尔曲线
     const getControlPoint1 = (centroid: THREE.Vector3): THREE.Vector3 => {
       const signY = Math.sign(centroid.y)
       tempPoint.x = THREE.MathUtils.randFloat(0.3, 0.6) * 50
@@ -446,6 +557,7 @@ class Slide extends THREE.Mesh {
       const centroid: THREE.Vector3 = computeCentroid(indices, positions, i * 3)
 
       // Animation
+      // 根据质心的 X 和 Y 坐标计算动画的延迟时间
       const duration = THREE.MathUtils.randFloat(minDuration, maxDuration)
       const delayX = THREE.MathUtils.mapLinear(
         centroid.x,
@@ -466,6 +578,7 @@ class Slide extends THREE.Mesh {
         aAnimationArray[i2 + v + 1] = duration
       }
       // Positions
+      // 初始化为面的质心
       endPosition.copy(centroid)
       startPosition.copy(centroid)
       if (animationPhase === 'in') {
@@ -499,14 +612,13 @@ class Slide extends THREE.Mesh {
     const basicShader = THREE.ShaderLib['basic']
 
     const tempUniforms = THREE.UniformsUtils.merge([basicShader.uniforms, { uTime: { value: 0 } }])
-    const uniformValues = new THREE.Texture()
 
-    tempUniforms.map.value = uniformValues
+    tempUniforms.map.value = new THREE.Texture()
 
     // const vertexShader = _concatVertexShader(animationPhase);
 
     const material = new THREE.ShaderMaterial({
-      // vertexShader: vertexShader,
+      vertexShader: vertexShader,
       // fragmentShader: fragmentShader,
       lights: false,
       uniforms: tempUniforms,
@@ -523,6 +635,7 @@ class Slide extends THREE.Mesh {
 
     super(geometry, material)
     this.frustumCulled = false
+    // 每个面动画的总持续时间
     this.totalDuration = maxDuration + maxDelayX + maxDelayY + stretch
   }
 
@@ -652,8 +765,7 @@ const show = (deviceInfo: Record<string, any>) => {
   root.renderer.setPixelRatio(1)
   root.camera.position.set(0, 0, 60)
 
-  const width = 100,
-    height = 60
+  const width = 100, height = 60
   const slide = new Slide(width, height, 'out')
 
   const l1 = new THREE.ImageLoader()
@@ -661,12 +773,13 @@ const show = (deviceInfo: Record<string, any>) => {
   l1.load(
     './images/spring.png',
     function (image) {
+      console.log('image')
       console.log(image)
       slide.setImage(image)
     },
     undefined,
     function (e) {
-      console.log('image')
+      console.log('err')
       console.error('An error happened.', e)
     },
   )
@@ -675,9 +788,9 @@ const show = (deviceInfo: Record<string, any>) => {
 
   const tl = gsap.timeline({ repeat: -1, repeatDelay: 1, yoyo: true })
 
-  tl.add(slide.transition(), 0)
+  // tl.add(slide.transition(), 0)
 
-  createTweenScrubber(tl)
+  // createTweenScrubber(tl)
 }
 </script>
 
