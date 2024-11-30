@@ -5,10 +5,29 @@
 <script lang="ts" setup>
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls'
-import { onMounted } from 'vue'
+import { onMounted, ref } from 'vue'
 import BAS from './bas'
-import { vertexShader, fragmentShader } from './bas'
+import { fragmentShader } from './bas'
 import { Power0, gsap } from 'gsap'
+
+const startPos = ref<number>(0)
+const endPos = ref<number>(0)
+const picIndex = ref<number>(0)
+
+onMounted(() => {
+  const root = new THREERoot({
+    createCameraControls: !true,
+    antialias: deviceInfo.devicePixelRatio === 1,
+    fov: 80,
+    deviceInfo: deviceInfo,
+  })
+
+  const width = 100,
+    height = 60
+  // togglePic(root, width, height)
+
+  changePic(root, width, height)
+})
 
 const utils = {
   // 源对象src中的所有属性复制到目标对象dst
@@ -23,31 +42,6 @@ const utils = {
       }
     }
     return dst as T & U
-  },
-
-  // 返回一个随机的符号，1或-1
-  randSign: function (): number {
-    return Math.random() > 0.5 ? 1 : -1
-  },
-
-  // 动画缓动函数
-  /**
-   * 使用给定的缓动函数ease来计算当前时间t下的位置
-   * @param ease 缓动函数
-   * @param t 当前时间
-   * @param b 初始位置
-   * @param c 变化量
-   * @param d 总时间
-   * @returns 计算后的当前位置
-   */
-  ease: function (
-    ease: { getRatio: (t: number) => number },
-    t: number,
-    b: number,
-    c: number,
-    d: number,
-  ): number {
-    return b + ease.getRatio(t / d) * c
   },
 }
 
@@ -69,7 +63,7 @@ class THREERoot {
   constructor(params: THREERootParams) {
     params = utils.extend(
       {
-        fov: 60,
+        fov: 80,
         zNear: 10,
         zFar: 100000,
         createCameraControls: true,
@@ -84,8 +78,12 @@ class THREERoot {
       alpha: true,
     })
 
+    this.renderer.setClearColor(0x000000, 0)
+
     this.renderer.setPixelRatio(Math.min(2, params.deviceInfo.devicePixelRatio || 1))
-    document.getElementById('three-container').appendChild(this.renderer.domElement)
+    ;(document.getElementById('three-container') as HTMLElement).appendChild(
+      this.renderer.domElement,
+    )
 
     this.camera = new THREE.PerspectiveCamera(
       params.fov,
@@ -93,7 +91,7 @@ class THREERoot {
       params.zNear,
       params.zFar,
     )
-
+    this.camera.position.set(0, 0, 60)
     this.scene = new THREE.Scene()
 
     // 默认 false
@@ -106,7 +104,7 @@ class THREERoot {
 
     this.resize()
     this.tick()
-    window.addEventListener('resize', this.resize, false)
+    window.addEventListener('resize', this.resize)
   }
 
   tick(): void {
@@ -136,15 +134,10 @@ const deviceInfo = {
   windowHeight: window.innerHeight,
 }
 
-onMounted(() => {
-  show(deviceInfo)
-})
-
 // 返回 vec3 cubicBezier(vec3 p0, vec3 c0, vec3 c1, vec3 p1, float t) 等
 const _concatFunctions = () => {
   const shaderFunctions = [
     BAS.ShaderChunk['cubic_bezier'],
-    // BAS.ShaderChunk[(animationPhase === 'in' ? 'ease_out_cubic' : 'ease_in_cubic')],
     BAS.ShaderChunk['ease_in_out_cubic'],
     BAS.ShaderChunk['quaternion_rotation'],
   ]
@@ -176,7 +169,7 @@ const _concatVertexInit = () => {
 }
 
 const _concatTransformNormal = () => {
-  const shaderTransformNormal = []
+  const shaderTransformNormal: string[] = []
   return shaderTransformNormal.join('\n')
 }
 const _concatTransformPosition = (animationPhase: string) => {
@@ -201,6 +194,14 @@ const _concatVertexShader = (animationPhase: string) => {
     _concatFunctions(),
 
     _concatParameters(),
+
+    'vec4 lineartoLinear( in vec4 value) {',
+    'return value;',
+    '}',
+
+    'vec4 mapTexelToLinear(vec4 value) {',
+    'return lineartoLinear(value);',
+    '}',
 
     'void main() {',
 
@@ -234,15 +235,9 @@ const _concatVertexShader = (animationPhase: string) => {
 
     THREE.ShaderChunk['worldpos_vertex'],
     THREE.ShaderChunk['envmap_vertex'],
-
     '}',
   ].join('\n')
 }
-
-// const setUniformValues = (uniformValues: THREE.Texture, uniforms: { [key: string]: any }) => {
-//   uniforms.map.value = uniformValues
-//   return uniforms
-// }
 
 const createAttribute = (geometry: THREE.BufferGeometry, name: string, itemSize: number) => {
   const buffer = new Float32Array(geometry.attributes.position.count * itemSize)
@@ -270,65 +265,6 @@ const computeCentroid = (indices, positions, i: number) => {
   return vector
 }
 
-// 手动分离每个面的顶点
-const separateFaces = (originalGeometry: THREE.BufferGeometry) => {
-  const originalPositionAttribute = originalGeometry.attributes.position
-  const originalPositions = originalPositionAttribute.array
-  const originalIndices = originalGeometry.index ? originalGeometry.index.array : null
-
-  const newVertices = []
-  const newIndices = []
-  let currentIndex = 0
-
-  for (let i = 0; i < originalIndices.length; i += 3) {
-    const index1 = originalIndices[i]
-    const index2 = originalIndices[i + 1]
-    const index3 = originalIndices[i + 2]
-
-    const vertex1 = new THREE.Vector3(
-      originalPositions[index1 * 3],
-      originalPositions[index1 * 3 + 1],
-      originalPositions[index1 * 3 + 2],
-    )
-    const vertex2 = new THREE.Vector3(
-      originalPositions[index2 * 3],
-      originalPositions[index2 * 3 + 1],
-      originalPositions[index2 * 3 + 2],
-    )
-    const vertex3 = new THREE.Vector3(
-      originalPositions[index3 * 3],
-      originalPositions[index3 * 3 + 1],
-      originalPositions[index3 * 3 + 2],
-    )
-
-    newVertices.push(vertex1)
-    newVertices.push(vertex2)
-    newVertices.push(vertex3)
-
-    newIndices.push(currentIndex)
-    newIndices.push(currentIndex + 1)
-    newIndices.push(currentIndex + 2)
-
-    currentIndex += 3
-  }
-
-  const newPositions = new Float32Array(newVertices.length * 3)
-  for (let i = 0; i < newVertices.length; i++) {
-    const vertex = newVertices[i]
-    newPositions[i * 3] = vertex.x
-    newPositions[i * 3 + 1] = vertex.y
-    newPositions[i * 3 + 2] = vertex.z
-  }
-
-  const newPositionAttribute = new THREE.BufferAttribute(newPositions, 3)
-
-  // 创建新的BufferGeometry并设置新的属性
-  // const newBufferGeometry = new THREE.BufferGeometry()
-  originalGeometry.setAttribute('position', newPositionAttribute)
-  const newIndexAttribute = new THREE.BufferAttribute(new Uint32Array(newIndices), 1)
-  originalGeometry.setIndex(newIndexAttribute)
-}
-
 const handle = (bufferGeometry: THREE.BufferGeometry) => {
   // 用于存储重新组织后的顶点位置数据
   const newVerticesArray = []
@@ -346,71 +282,43 @@ const handle = (bufferGeometry: THREE.BufferGeometry) => {
   let currentIndex = 0
   while (currentIndex < indexAttribute.count) {
     // 每个面由三个索引构成
-    const index1 = indexArray[currentIndex];
-    const index2 = indexArray[currentIndex + 1];
-    const index3 = indexArray[currentIndex + 2];
+    const index1 = indexArray[currentIndex]
+    const index2 = indexArray[currentIndex + 1]
+    const index3 = indexArray[currentIndex + 2]
 
     // 提取原始位置数据（每个顶点的 x, y, z）
     const vertex1 = [
-      prePositions[index1 * 3], prePositions[index1 * 3 + 1], prePositions[index1 * 3 + 2]
-    ];
+      prePositions[index1 * 3],
+      prePositions[index1 * 3 + 1],
+      prePositions[index1 * 3 + 2],
+    ]
     const vertex2 = [
-      prePositions[index2 * 3], prePositions[index2 * 3 + 1], prePositions[index2 * 3 + 2]
-    ];
+      prePositions[index2 * 3],
+      prePositions[index2 * 3 + 1],
+      prePositions[index2 * 3 + 2],
+    ]
     const vertex3 = [
-      prePositions[index3 * 3], prePositions[index3 * 3 + 1], prePositions[index3 * 3 + 2]
-    ];
+      prePositions[index3 * 3],
+      prePositions[index3 * 3 + 1],
+      prePositions[index3 * 3 + 2],
+    ]
 
     // 提取原始法线数据
-    const normal1 = [
-      preNormals[index1 * 3], preNormals[index1 * 3 + 1], preNormals[index1 * 3 + 2]
-    ];
-    const normal2 = [
-      preNormals[index2 * 3], preNormals[index2 * 3 + 1], preNormals[index2 * 3 + 2]
-    ];
-    const normal3 = [
-      preNormals[index3 * 3], preNormals[index3 * 3 + 1], preNormals[index3 * 3 + 2]
-    ];
+    const normal1 = [preNormals[index1 * 3], preNormals[index1 * 3 + 1], preNormals[index1 * 3 + 2]]
+    const normal2 = [preNormals[index2 * 3], preNormals[index2 * 3 + 1], preNormals[index2 * 3 + 2]]
+    const normal3 = [preNormals[index3 * 3], preNormals[index3 * 3 + 1], preNormals[index3 * 3 + 2]]
 
     // 提取原始 UV 数据
-    const uv1 = [
-      preUvs[index1 * 2], preUvs[index1 * 2 + 1]
-    ];
-    const uv2 = [
-      preUvs[index2 * 2], preUvs[index2 * 2 + 1]
-    ];
-    const uv3 = [
-      preUvs[index3 * 2], preUvs[index3 * 2 + 1]
-    ];
+    const uv1 = [preUvs[index1 * 2], preUvs[index1 * 2 + 1]]
+    const uv2 = [preUvs[index2 * 2], preUvs[index2 * 2 + 1]]
+    const uv3 = [preUvs[index3 * 2], preUvs[index3 * 2 + 1]]
 
     // 将每个顶点的位置、法线和 UV 数据添加到新数组中
-    newVerticesArray.push(...vertex1, ...vertex2, ...vertex3);
-    newNormalsArray.push(...normal1, ...normal2, ...normal3);
-    newUvArray.push(...uv1, ...uv2, ...uv3);
+    newVerticesArray.push(...vertex1, ...vertex2, ...vertex3)
+    newNormalsArray.push(...normal1, ...normal2, ...normal3)
+    newUvArray.push(...uv1, ...uv2, ...uv3)
     // 继续处理下一个面
-    currentIndex += 3;
-
-
-    // 根据索引数组中后续元素是否存在来判断是三角形面还是四边形面，三角形面顶点数量为 3，四边形面通过两个三角形组成所以顶点数量为 6
-    // const faceVertexCount = indexArray[currentIndex + 2] === undefined ? 3 : 6
-    // for (let i = 0; i < faceVertexCount; i++) {
-    //   const index = indexArray[currentIndex + i]
-    //   // 处理顶点位置数据
-    //   const vertex = [
-    //     prePositions[index * 3],
-    //     prePositions[index * 3 + 1],
-    //     prePositions[index * 3 + 2],
-    //   ]
-    //   newVerticesArray.push(...vertex)
-    //   // 处理uv坐标数据
-    //   const uvCoord = [preUvs[index * 2], preUvs[index * 2 + 1]]
-    //   newUvArray.push(...uvCoord)
-
-    //   // 处理法线数据
-    //   const normal = [preNormals[index * 3], preNormals[index * 3 + 1], preNormals[index * 3 + 2]]
-    //   newNormalsArray.push(...normal)
-    // }
-    // currentIndex += faceVertexCount
+    currentIndex += 3
   }
 
   bufferGeometry.setAttribute(
@@ -424,10 +332,10 @@ const handle = (bufferGeometry: THREE.BufferGeometry) => {
   )
 
   // 更新索引数组
-  const indexAttrArray = Array.from({ length: 144000 }, (item, index) => index);
+  const indexAttrArray = Array.from({ length: 144000 }, (item, index) => index)
 
   // 将索引数组转换为 BufferAttribute, 一定是
-  bufferGeometry.index = new THREE.BufferAttribute(new Uint32Array(indexAttrArray), 1);
+  bufferGeometry.index = new THREE.BufferAttribute(new Uint32Array(indexAttrArray), 1)
   // bufferGeometry.setIndex(new THREE.BufferAttribute(new Uint32Array(indexAttrArray), 1))
 }
 
@@ -436,25 +344,25 @@ const bufferPositions = (bufferGeometry: THREE.BufferGeometry) => {
   const indices = bufferGeometry.index?.array || []
 
   const tempArr = []
-  for ( let i = 0; i < bufferGeometry.index.count / 3; i++ ) {
-  // for ( let i = 0; i < 2; i++ ) {
+  for (let i = 0; i < bufferGeometry.index.count / 3; i++) {
+    // for (let i = 0; i < 3; i++) {
     const centroid: THREE.Vector3 = computeCentroid(indices, positions, i * 3)
     // 第 i 个面 3 个顶点
-    const x1 = positions[i * 3]
-    const y1 = positions[i * 3 + 1]
-    const z1 = positions[i * 3 + 2]
+    const x1 = positions[i * 3 * 3]
+    const y1 = positions[i * 3 * 3 + 1]
+    const z1 = positions[i * 3 * 3 + 2]
 
-    const x2 = positions[(i + 1) * 3]
-    const y2 = positions[(i + 1) * 3 + 1]
-    const z2 = positions[(i + 1) * 3 + 2]
+    const x2 = positions[(i * 3 + 1) * 3]
+    const y2 = positions[(i * 3 + 1) * 3 + 1]
+    const z2 = positions[(i * 3 + 1) * 3 + 2]
 
-    const x3 = positions[(i + 2) * 3]
-    const y3 = positions[(i + 2) * 3 + 1]
-    const z3 = positions[(i + 2) * 3 + 2]
+    const x3 = positions[(i * 3 + 2) * 3]
+    const y3 = positions[(i * 3 + 2) * 3 + 1]
+    const z3 = positions[(i * 3 + 2) * 3 + 2]
 
     tempArr[i * 3 * 3] = x1 - centroid.x
-    tempArr[(i * 3 + 1) * 3 + 1] = y1 - centroid.y
-    tempArr[(i * 3 + 2) * 3 + 2] = z1 - centroid.z
+    tempArr[i * 3 * 3 + 1] = y1 - centroid.y
+    tempArr[i * 3 * 3 + 2] = z1 - centroid.z
 
     tempArr[(i * 3 + 1) * 3] = x2 - centroid.x
     tempArr[(i * 3 + 1) * 3 + 1] = y2 - centroid.y
@@ -463,21 +371,13 @@ const bufferPositions = (bufferGeometry: THREE.BufferGeometry) => {
     tempArr[(i * 3 + 2) * 3] = x3 - centroid.x
     tempArr[(i * 3 + 2) * 3 + 1] = y3 - centroid.y
     tempArr[(i * 3 + 2) * 3 + 2] = z3 - centroid.z
-
-    // console.log("face.a, face.b, face.c:", i, i + 1, i+ 2)
-    // console.log("face.a * 3, face.b * 3, face.c * 3:", i * 3 * 3, (i * 3 + 1) * 3, (i * 3 + 2) * 3)
-
   }
-  const newPositionAttribute = new THREE.BufferAttribute(new Float32Array(tempArr), 3)
-  bufferGeometry.setAttribute('position', newPositionAttribute)
+  bufferGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(tempArr), 3))
 }
 
 // 给 bufferGeometry 添加 shaderMaterial 示例
 class Slide extends THREE.Mesh {
   totalDuration: number
-  width: number
-  height: number
-  animationPhase: 'in' | 'out'
   image: any
 
   constructor(width: number, height: number, animationPhase: 'in' | 'out') {
@@ -486,8 +386,6 @@ class Slide extends THREE.Mesh {
     // separateFaces(geometry)
 
     handle(geometry)
-
-    bufferPositions(geometry)
 
     /**
      * 自定义的顶点属性。通过 createAttribute 方法创建属性并绑定到几何体上。每个属性的第二个参数是每个顶点需要存储的数据量（例如，3 表示三维向量）
@@ -545,11 +443,7 @@ class Slide extends THREE.Mesh {
       return tempPoint
     }
 
-    for (
-      let i = 0, i2 = 0, i3 = 0, i4 = 0;
-      i < geometry.index.count / 3;
-      i++, i2 += 6, i3 += 9, i4 += 12
-    ) {
+    for (let i = 0, i2 = 0, i3 = 0; i < geometry.index.count / 3; i++, i2 += 6, i3 += 9) {
       const positionAttribute = geometry.getAttribute('position')
       const positions = positionAttribute.array
       const indices = geometry.index?.array || []
@@ -610,28 +504,24 @@ class Slide extends THREE.Mesh {
     }
 
     const basicShader = THREE.ShaderLib['basic']
-
     const tempUniforms = THREE.UniformsUtils.merge([basicShader.uniforms, { uTime: { value: 0 } }])
 
     tempUniforms.map.value = new THREE.Texture()
 
-    // const vertexShader = _concatVertexShader(animationPhase);
-
     const material = new THREE.ShaderMaterial({
-      vertexShader: vertexShader,
-      // fragmentShader: fragmentShader,
+      vertexShader: _concatVertexShader(animationPhase),
+      // 加了
+      fragmentShader: fragmentShader,
       lights: false,
       uniforms: tempUniforms,
       defines: {
         USE_MAP: '',
+        USE_UV: '',
       },
       side: THREE.DoubleSide,
     })
 
-    console.log('geometry')
-    console.log(geometry)
-    console.log('material')
-    console.log(material)
+    bufferPositions(geometry)
 
     super(geometry, material)
     this.frustumCulled = false
@@ -640,32 +530,8 @@ class Slide extends THREE.Mesh {
   }
 
   setImage(image: HTMLImageElement | HTMLCanvasElement | THREE.Texture): void {
-    // 使用箭头函数来确保this始终指向Slide类的实例，避免this指向丢失或错误的情况
-    const setImageInternal = (img: HTMLImageElement | HTMLCanvasElement | THREE.Texture) => {
-      if (!this.material) {
-        console.error('材质未正确初始化，无法设置图片')
-        return
-      }
-      const shaderMaterial = this.material as THREE.ShaderMaterial
-      if (!shaderMaterial.uniforms.map) {
-        console.error('材质的uniforms中不存在map属性，无法设置图片')
-        return
-      }
-      const mapUniform = shaderMaterial.uniforms.map
-      // 先进行类型判断，确保传入的image类型符合期望，避免后续赋值出现类型错误
-      if (
-        img instanceof HTMLImageElement ||
-        img instanceof HTMLCanvasElement ||
-        img instanceof THREE.Texture
-      ) {
-        mapUniform.value.image = img
-        mapUniform.value.needsUpdate = true
-        console.log('图片已成功设置到材质')
-      } else {
-        console.error('传入的image参数类型不符合要求，无法设置图片')
-      }
-    }
-    setImageInternal(image)
+    ;(this.material as THREE.ShaderMaterial).uniforms.map.value.image = image
+    ;(this.material as THREE.ShaderMaterial).uniforms.map.value.needsUpdate = true
   }
 
   get time(): number {
@@ -713,16 +579,27 @@ const createTweenScrubber = (tween: gsap.core.Timeline, seekSpeed: number = 0.00
   let mouseDown = false
   document.body.style.cursor = 'pointer'
 
-  window.addEventListener('mousedown', function (e) {
+  window.addEventListener('mousedown', (e) => {
+    startPos.value = e.clientX
     mouseDown = true
     document.body.style.cursor = 'ew-resize'
     _cx = e.clientX
     stop()
   })
-  window.addEventListener('mouseup', function () {
+  window.addEventListener('mouseup', (e) => {
+    endPos.value = e.clientX
     mouseDown = false
     document.body.style.cursor = 'pointer'
     resume()
+
+    console.log(e)
+    if (endPos.value - startPos.value > 0) {
+      console.log('鼠标右滑')
+    } else if (endPos.value - startPos.value < 0) {
+      console.log('鼠标左滑')
+    } else {
+      console.log(endPos.value, startPos.value)
+    }
   })
   window.addEventListener('mousemove', function (e) {
     if (mouseDown === true) {
@@ -733,7 +610,7 @@ const createTweenScrubber = (tween: gsap.core.Timeline, seekSpeed: number = 0.00
       seek(dx)
     }
   })
-  // mobile
+
   window.addEventListener('touchstart', function (e) {
     _cx = e.touches[0].clientX
     stop()
@@ -753,44 +630,57 @@ const createTweenScrubber = (tween: gsap.core.Timeline, seekSpeed: number = 0.00
   })
 }
 
-const show = (deviceInfo: Record<string, any>) => {
-  const root = new THREERoot({
-    createCameraControls: !true,
-    antialias: deviceInfo.devicePixelRatio === 1,
-    fov: 80,
-    deviceInfo: deviceInfo,
-  })
-
-  root.renderer.setClearColor(0x000000, 0)
-  root.renderer.setPixelRatio(1)
-  root.camera.position.set(0, 0, 60)
-
-  const width = 100, height = 60
-  const slide = new Slide(width, height, 'out')
-
-  const l1 = new THREE.ImageLoader()
-  l1.setCrossOrigin('Anonymous')
-  l1.load(
-    './images/spring.png',
-    function (image) {
-      console.log('image')
-      console.log(image)
-      slide.setImage(image)
-    },
-    undefined,
-    function (e) {
-      console.log('err')
-      console.error('An error happened.', e)
-    },
-  )
-
-  root.scene.add(slide)
-
+const togglePic = (root: THREERoot, width: number, height: number) => {
   const tl = gsap.timeline({ repeat: -1, repeatDelay: 1, yoyo: true })
+  const twoPic = (animationPhase: 'in' | 'out', url: string) => {
+    const slide = new Slide(width, height, animationPhase)
+    const l = new THREE.ImageLoader()
+    l.load(
+      url,
+      (image) => {
+        slide.setImage(image)
+      },
+      undefined,
+      (e) => {
+        console.error('error: ', e)
+      },
+    )
+    root.scene.add(slide)
+    tl.add(slide.transition(), 0)
+  }
+  twoPic('out', './images/pic1.jpg')
+  twoPic('in', './images/pic2.jpg')
+  createTweenScrubber(tl)
+}
 
-  // tl.add(slide.transition(), 0)
+const changePic = (root: THREERoot, width: number, height: number) => {
+  const picArr = ['./images/pic1.jpg', './images/pic2.jpg', './images/R-C.jpg']
+  // 0 ~ max 随机整数
+  // Math.floor(Math.random() * max)
 
-  // createTweenScrubber(tl)
+  const tl = gsap.timeline({ repeat: 1, repeatDelay: 1, yoyo: true })
+  const animationPhase: 'in' | 'out' = startPos.value - endPos.value > 0 ? 'out' : 'in'
+
+  const cPic = () => {
+    const slide = new Slide(width, height, animationPhase)
+    const l = new THREE.ImageLoader()
+    l.load(
+      picArr[
+        picIndex.value < 0 ? 0 : picIndex.value > picArr.length ? picArr.length : picIndex.value
+      ],
+      (image) => {
+        slide.setImage(image)
+      },
+      undefined,
+      (e) => {
+        console.error('error: ', e)
+      },
+    )
+    root.scene.add(slide)
+    tl.add(slide.transition(), 0)
+  }
+
+  // cPic()
 }
 </script>
 

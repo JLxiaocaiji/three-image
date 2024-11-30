@@ -82,61 +82,6 @@ vec3 linePlaneIntersect( in vec3 pointOnLine, in vec3 lineDirection, in vec3 poi
 	uniform vec4 offsetRepeat;
 #endif
 
-#if defined( USE_LIGHTMAP ) || defined( USE_AOMAP )
-	attribute vec2 uv2;
-	varying vec2 vUv2;
-#endif
-#if defined( USE_ENVMAP ) && ! defined( USE_BUMPMAP ) && ! defined( USE_NORMALMAP ) && ! defined( PHONG ) && ! defined( STANDARD )
-	varying vec3 vReflect;
-	uniform float refractionRatio;
-#endif
-
-#ifdef USE_COLOR
-	varying vec3 vColor;
-#endif
-#ifdef USE_MORPHTARGETS
-	#ifndef USE_MORPHNORMALS
-	uniform float morphTargetInfluences[ 8 ];
-	#else
-	uniform float morphTargetInfluences[ 4 ];
-	#endif
-#endif
-#ifdef USE_SKINNING
-	uniform mat4 bindMatrix;
-	uniform mat4 bindMatrixInverse;
-	#ifdef BONE_TEXTURE
-		uniform sampler2D boneTexture;
-		uniform int boneTextureWidth;
-		uniform int boneTextureHeight;
-		mat4 getBoneMatrix( const in float i ) {
-			float j = i * 4.0;
-			float x = mod( j, float( boneTextureWidth ) );
-			float y = floor( j / float( boneTextureWidth ) );
-			float dx = 1.0 / float( boneTextureWidth );
-			float dy = 1.0 / float( boneTextureHeight );
-			y = dy * ( y + 0.5 );
-			vec4 v1 = texture2D( boneTexture, vec2( dx * ( x + 0.5 ), y ) );
-			vec4 v2 = texture2D( boneTexture, vec2( dx * ( x + 1.5 ), y ) );
-			vec4 v3 = texture2D( boneTexture, vec2( dx * ( x + 2.5 ), y ) );
-			vec4 v4 = texture2D( boneTexture, vec2( dx * ( x + 3.5 ), y ) );
-			mat4 bone = mat4( v1, v2, v3, v4 );
-			return bone;
-		}
-	#else
-		uniform mat4 boneGlobalMatrices[ MAX_BONES ];
-		mat4 getBoneMatrix( const in float i ) {
-			mat4 bone = boneGlobalMatrices[ int(i) ];
-			return bone;
-		}
-	#endif
-#endif
-
-#ifdef USE_LOGDEPTHBUF
-	#ifdef USE_LOGDEPTHBUF_EXT
-		varying float vFragDepth;
-	#endif
-	uniform float logDepthBufFC;
-#endif
 vec3 cubicBezier(vec3 p0, vec3 c0, vec3 c1, vec3 p1, float t)
 {
     vec3 tp;
@@ -193,11 +138,11 @@ void main() {
   gl_Position = projectionMatrix * mvPosition;
 }
 `
-
+// https://discourse.threejs.org/t/threejs-r111-it-normal-but-threejs-r131-it-error-using-shadermaterial-error-maptexeltolinear-no-matching/29544/7
 export const fragmentShader = `
-uniform vec3 diffuse;   // 三维向量，通常用于表示材质的漫反射颜色分量
-uniform float opacity;  // 浮点数，用于控制材质的不透明度，取值范围一般从 0（完全透明）到 1
-#ifndef FLAT_SHADED     // #include 语句引入了一系列预定义的代码片段
+uniform vec3 diffuse;
+uniform float opacity;
+#ifndef FLAT_SHADED
 	varying vec3 vNormal;
 #endif
 #include <common>
@@ -211,8 +156,16 @@ uniform float opacity;  // 浮点数，用于控制材质的不透明度，取�
 #include <fog_pars_fragment>
 #include <specularmap_pars_fragment>
 #include <logdepthbuf_pars_fragment>
+
+vec4 lineartoLinear( in vec4 value) {
+  return value;
+}
+
+vec4 mapTexelToLinear(vec4 value) {
+  return lineartoLinear(value);
+}
 void main() {
-	vec4 diffuseColor = vec4( diffuse, opacity ); // vec4类型（包含四个分量的向量，通常用于表示颜色的 RGBA 值）
+	vec4 diffuseColor = vec4( diffuse, opacity );
 	#include <logdepthbuf_fragment>
 	#include <map_fragment>
 	#include <color_fragment>
@@ -220,10 +173,10 @@ void main() {
 	#include <alphatest_fragment>
 	#include <specularmap_fragment>
 	ReflectedLight reflectedLight;
-	reflectedLight.directDiffuse = vec3( 0.0 ); // 直接漫反射
-	reflectedLight.directSpecular = vec3( 0.0 );  // 直接高光反射
-	reflectedLight.indirectDiffuse = diffuseColor.rgb;  // 间接漫反射（indirectDiffuse）分量设置为diffuseColor.rgb，即材质的漫反射颜色部分
-	reflectedLight.indirectSpecular = vec3( 0.0 );  // 间接高光反射
+	reflectedLight.directDiffuse = vec3( 0.0 );
+	reflectedLight.directSpecular = vec3( 0.0 );
+	reflectedLight.indirectDiffuse = diffuseColor.rgb;
+	reflectedLight.indirectSpecular = vec3( 0.0 );
 	#include <aomap_fragment>
 	vec3 outgoingLight = reflectedLight.indirectDiffuse;
 	#include <envmap_fragment>
@@ -235,22 +188,6 @@ void main() {
 }
 `
 
-const computeCentroid = (indices: number[], positions: number[], i: number): THREE.Vector3 => {
-  const index1 = indices[i]
-  const index2 = indices[i + 1]
-  const index3 = indices[i + 2]
-
-  // 获取每个顶点的位置
-  const vertex1 = new THREE.Vector3().fromArray(positions, index1 * 3)
-  const vertex2 = new THREE.Vector3().fromArray(positions, index2 * 3)
-  const vertex3 = new THREE.Vector3().fromArray(positions, index3 * 3)
-
-  // 计算质心：取三个顶点的坐标平均
-  const centroid = new THREE.Vector3()
-  centroid.add(vertex1).add(vertex2).add(vertex3).divideScalar(3)
-
-  return centroid
-}
 
 const getCentroidsForTriangles = (bufferGeometry: THREE.BufferGeometry): THREE.Vector3[] => {
   const indices = bufferGeometry.index!.array // 可能是 undefined, 需要确保存在
